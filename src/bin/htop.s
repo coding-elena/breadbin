@@ -24,7 +24,7 @@
 .include "../../include/breadbin.inc"
 .import print, eprint, dec_str
 
-NSLOT  = 16             ; procinfo slots (the kernel uses the first 12)
+NSLOT  = 12             ; procinfo slots (the kernel uses the first 12)
 BARW   = 16             ; bar width
 REFRESH = 128           ; ticks per round
 MAXEL   = 32            ; at most this many ticks for one wake-up (a long
@@ -239,12 +239,6 @@ draw:   lda #<mi
         jsr ram_line
         jsr out_eol
 
-        ; reu / geo nnnk: the expansion size, as free (banks * 64 KB)
-        lda #3
-        jsr out_goto
-        jsr exp_line
-        jsr out_eol
-
         ; tasks n/max  pg free/total  up h:mm
         lda #4
         jsr out_goto
@@ -384,10 +378,10 @@ draw:   lda #<mi
         sta idle
         rts
 
-; exp_line: with an REU or GeoRAM, "reu"/"geo" and its size in KB
-; (banks * 64), as free does. Nothing without.
-exp_line:
-        lda mi+2
+; ram_line: with an REU or GeoRAM (meminfo type), "reu"/"geo" and how full
+; the /tmp RAM disk on it is: bar, percent, used/total KB. Nothing without.
+ram_line:
+        lda mi+5
         bne @x
         rts                 ; no expansion: nothing
 @x:     ldx #<s_reu
@@ -403,31 +397,6 @@ exp_line:
         tax
         pla
         jsr out_str
-        lda #0
-        sta rb
-        lda mi+2
-        ldy #6
-@m:     asl a               ; banks * 64
-        rol rb
-        dey
-        bne @m
-        ldx rb
-        ldy #0
-        jsr out_dec16
-        lda #'k'
-        jmp out_ch
-
-; ram_line: with an REU or GeoRAM (meminfo type), "reu"/"geo" and how full
-; the /tmp RAM disk on it is: bar, percent, used/total KB. Nothing without.
-ram_line:
-        lda mi+5
-        bne @x
-        rts                 ; no expansion: nothing
-@x:     lda #<(s_tmp+1)     ; "tmp" (s_tmp is "/tmp")
-        ldx #>(s_tmp+1)
-        jsr out_str
-        lda #' '
-        jsr out_ch
         lda #<s_tmp         ; fsinfo("/tmp"): free, total blocks
         sta r0
         lda #>s_tmp
@@ -455,13 +424,19 @@ ram_line:
         sta uk,x
         dex
         bpl @k
-        ldx #2
-@q:     lsr uk+1
-        ror uk
-        lsr tk+1
+
+        asl uk
+        rol uk+1
+        lda #0
+        sta tk
+
+        lda mi+2             ; banks * 64
+        lsr a
         ror tk
-        dex
-        bne @q
+        lsr a
+        ror tk
+        sta tk+1
+
 @s:     lda tb+1            ; the same shift on both until total fits 8 bits
         beq @p
         lsr tb+1
@@ -475,7 +450,7 @@ ram_line:
         jsr bar_pct
         lda uk
         ldx uk+1
-        ldy #5
+        ldy #4
         jsr out_dec16
         lda #'/'
         jsr out_ch
@@ -768,7 +743,6 @@ uk:     .res 2          ; used KB                    order (copied as 4 bytes)
 tk:     .res 2          ; total KB
 t:      .res 3          ; uptime: jiffies, then minutes, hours
 mins:   .res 1
-rb:     .res 1          ; exp_line: size high byte
 key:    .res 1
 ox:     .res 1
 oy:     .res 1
