@@ -425,8 +425,11 @@ ram_line:
         dex
         bpl @k
 
-        asl uk
-        rol uk+1
+        lsr uk+1
+        ror uk
+        lsr uk+1
+        ror uk
+
         lda #0
         sta tk
 
