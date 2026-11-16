@@ -1,7 +1,8 @@
-; talk [user]: chat with the user on the other terminal
+; talk user: chat with the user on the other terminal
 ;
-;   talk            ask the other terminal to chat, or answer its request
-;   talk user       the same, but only if `user` is the one logged in there
+;   talk user       ask `user` on the other terminal to chat, or answer
+;                   the request that `user` made to us. Only if `user` is
+;                   the one logged in there.
 ;
 ; Terminal 0 is the console, terminal 1 the serial line; our own is found
 ; with isatty. There is at most one other session: init runs one login
@@ -17,18 +18,19 @@
 ;   /tmp/talk.N.req  request addressed to terminal N: caller's pid, uid
 ;   /tmp/talk.N.acc  answer to the request made BY terminal N: pid, uid
 ;
-; Both are removed once read. A process killed with CTRL-C can't clean
-; up, so each end checks the other's pid (kill with signal 0): a request
-; from a dead caller is removed. During the chat, a one-page watcher
+; Both are removed once read. The caller asks once (one notice on the
+; other terminal), then waits up to a minute for the answer and hangs up
+; with "no answer" if there is none. A process killed with CTRL-C can't
+; clean up, so each end checks the other's pid (kill with signal 0): a
+; request from a dead caller is removed. During the chat, a one-page watcher
 ; (talkw, our own user's: only root may signal another user's process)
 ; ends this talk when the other end has gone, by CTRL-D or killed.
 .include "../../include/breadbin.inc"
 .import print, eprint, fprint, fputc, argn, perr
-.import dec_str, pw_find_uid, pw_find_name, pw_name, pw_uid, newline
+.import dec_str, pw_find_uid, pw_find_name, pw_name, pw_uid
 
 POLL    = 20            ; jiffies between looks while calling
-RING    = 30            ; looks between two rings (10 s)
-RINGS   = 6             ; rings before giving up (1 min)
+WAIT    = 180           ; looks before giving up (60 s)
 LINEMAX = 80            ; a line from the terminal: 79 characters and its LF
 IDMAX   = 26           ; "name@console: " (a name is at most 15 characters)
 
@@ -51,7 +53,7 @@ skip:
 sp:     .res 2          ; mkid: the string being copied
 
 .segment "CODE"
-start:                          ; (BSS starts out zero: haswant too)
+start:
         jsr getterm
         bcc @tty
         lda #<s_notty
@@ -61,23 +63,20 @@ start:                          ; (BSS starts out zero: haswant too)
         sta myuid
         jsr SYS_GETPID
         sta mypid
-        lda argc
-        cmp #3
-        bcc @args
+        lda argc            ; exactly one argument: the user
+        cmp #2
+        beq @args
         lda #<s_usage
         ldx #>s_usage
         jmp fail
-@args:  cmp #2
-        bcc @go
-        lda #1
+@args:  lda #1
         jsr argn
         jsr pw_find_name
         bcc @known
         jmp notlogged       ; no such user is as good as not logged in
 @known: lda pw_uid
         sta want
-        inc haswant
-@go:    jsr have_request
+        jsr have_request
         bcs @call
         jmp accept
 @call:  jmp call
@@ -160,29 +159,20 @@ app:    sta sp
 @r:     rts
 
 ; ---------------------------------------------------------------------
-; the caller: ask the other terminal, ring again every 10 s, give up
-; after a minute
+; the caller: ask the other terminal once, wait up to a minute for the
+; answer, then hang up
 call:   jsr peer_logged     ; or "User not logged in"
         setr0 ac_me         ; an old answer must not count
         jsr SYS_UNLINK
         setr0 rq_ot
         jsr wr_pair         ; request: my pid, my uid
         jcs ioerr
-        lda #<s_wait        ; "talk: waiting for name@term"
+        lda #<s_wait        ; "[Waiting for your party to respond]"
         ldx #>s_wait
         jsr print
-        lda peeruid
-        ldx other
-        jsr mkid
-        jsr id_len
-        ldy #1
-        jsr wr_obuf
-        jsr newline
         jsr mkme
-        jsr notify
-        lda #RINGS
-        sta rings
-        lda #RING
+        jsr notify          ; the one and only request notice
+        lda #WAIT
         sta tick
 @wait:  setr0 ac_me         ; answered?
         jsr rd_pair
@@ -207,13 +197,8 @@ call:   jsr peer_logged     ; or "User not logged in"
         jsr withdraw
         jmp notlogged
 @tick:  dec tick
-        bne @sleep
-        lda #RING
-        sta tick
-        dec rings
-        beq @noans
-        jsr notify          ; ring again
-@sleep: lda #<POLL
+        beq @noans          ; a minute without an answer
+        lda #<POLL
         ldx #>POLL
         jsr SYS_SLEEP
         jmp @wait
@@ -229,15 +214,13 @@ withdraw:
 
 ; peer_logged: the other session's shell (utpid) and user (peeruid). Ends
 ; the program with "User not logged in" if there is none, or it is not the
-; user asked for.
+; user asked for (want).
 peer_logged:
         jsr find_mysh
         jsr find_peer
         bcc @a
         jmp notlogged
-@a:     lda haswant
-        beq @ok
-        lda peeruid
+@a:     lda peeruid
         cmp want
         beq @ok
         jmp notlogged
@@ -391,8 +374,9 @@ wr_obuf:
 
 ; ---------------------------------------------------------------------
 ; the invited: a request waits for us
-; have_request: carry clear if a live caller's request is addressed to this
-; terminal (peerpid, peeruid = the caller). A dead caller's is removed.
+; have_request: carry clear if a live request from the user asked for
+; (want) is addressed to this terminal (peerpid, peeruid = the caller). A
+; dead caller's is removed; one from another user is left alone.
 have_request:
         setr0 rq_me
         jsr rd_pair
@@ -403,7 +387,14 @@ have_request:
         sta peeruid
         lda peerpid
         jsr alive
-        bcc @r
+        bcs @stale
+        lda peeruid
+        cmp want
+        bne @other
+        clc                 ; the user asked for
+        rts
+@other: sec                 ; someone else's request: left alone
+        rts
 @stale: setr0 rq_me         ; none, half written, or the caller gave up
         jsr SYS_UNLINK
         sec
@@ -568,13 +559,13 @@ d_ser:    .byte "/dev/ttyS0", 0
 s_console: .byte "console", 0
 s_tty:    .byte "tty", 0
 s_req:    .byte "talk: connection requested by ", 0
-s_ans:    .byte "talk: answer with: talk ", 0
-s_wait:   .byte "talk: waiting for ", 0
-s_est:    .byte "talk: connection established", 10, 0
+s_ans:    .byte "talk: respond with: talk ", 0
+s_wait:   .byte "[Waiting for your party to respond]", 10, 0
+s_est:    .byte "talk: connected", 10, 0
 s_noans:  .byte "talk: no answer", 10, 0
 s_notlog: .byte "User not logged in", 10, 0
 s_notty:  .byte "talk: not a terminal", 10, 0
-s_usage:  .byte "usage: talk [user]", 10, 0
+s_usage:  .byte "usage: talk user", 10, 0
 
 .segment "BSS"
 term:    .res 1
@@ -585,7 +576,6 @@ peerpid: .res 1
 peeruid: .res 1
 utpid:   .res 1
 want:    .res 1
-haswant: .res 1
 fd:      .res 1
 pfd:     .res 1
 idterm:  .res 1
@@ -596,7 +586,6 @@ hops:    .res 1
 mysh:    .res 1
 pi:      .res 17
 cnt:     .res 1
-rings:   .res 1
 tick:    .res 1
 plen:    .res 1
 nlen:    .res 1
