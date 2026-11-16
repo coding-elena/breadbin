@@ -5,7 +5,7 @@ text:   echo grep wc tee tail sort
 system: ps htop kill jobs fg bg free df
         uptime date uname version
         sleep clear theme
-users:  login whoami passwd
+users:  login whoami passwd talk
 code:   basic as
 disks:  mount umount format fsck sync
 shell:  a | b  > f  >> f  < f  cmd &
