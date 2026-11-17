@@ -764,14 +764,14 @@ class Talk(unittest.TestCase):
         """The console calls, the serial line answers."""
         self.v.run("echo")                          # a clear screen
         m = self.peer.mark()
-        self.v.type("talk\n")
-        self.v.wait_for("talk: waiting for user@tty")
+        self.v.type("talk user\n")
+        self.v.wait_for("[Waiting for your party to respond]")
         self.peer.wait_for("talk: connection requested by root@console", m)
-        self.peer.wait_for("talk: answer with: talk root", m)
+        self.peer.wait_for("talk: respond with: talk root", m)
         m = self.peer.mark()
-        self.peer.send("talk\r")
-        self.peer.wait_for("talk: connection established", m)
-        self.v.wait_for("talk: connection established")
+        self.peer.send("talk root\r")
+        self.peer.wait_for("talk: connected", m)
+        self.v.wait_for("talk: connected")
 
     def shell_back_on_serial(self, since):
         self.peer.wait_for("$ ", since)
@@ -808,15 +808,16 @@ class Talk(unittest.TestCase):
 
     def test_no_answer(self):
         m = self.peer.mark()
-        out = self.v.run("talk", timeout=600)
+        out = self.v.run("talk user", timeout=600)
         self.assertIn("talk: no answer", out)
         t = self.peer.text()[m:]
-        self.assertGreaterEqual(t.count("connection requested by"), 2)   # it rang again
+        self.assertEqual(t.count("connection requested by"), 1)   # it asks only once
         self.assertNotIn("talk.", self.v.run("ls /tmp"))
 
     def test_errors(self):
         self.assertIn("User not logged in", self.v.run("talk alice"))
-        self.assertIn("usage: talk [user]", self.v.run("talk a b"))
+        self.assertIn("usage: talk user", self.v.run("talk a b"))
+        self.assertIn("usage: talk user", self.v.run("talk"))
         self.assertEqual(self.v.run("talk user < /etc/motd; echo $?").splitlines()[-1], "1")
 
 
