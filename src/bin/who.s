@@ -13,6 +13,10 @@
 ; init, as talk does. That shell is on our terminal, so the only other
 ; session is on the other one. If none of our files is a terminal (all
 ; redirected), the terminal is shown as "?".
+;
+; vibed by Lenu
+;
+
 .include "../../include/breadbin.inc"
 .import print, putc, newline, print_dec_w, pw_find_uid, pw_name
 

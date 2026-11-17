@@ -25,6 +25,10 @@
 ; request from a dead caller is removed. During the chat, a one-page watcher
 ; (talkw, our own user's: only root may signal another user's process)
 ; ends this talk when the other end has gone, by CTRL-D or killed.
+;
+; vibed by Lenu
+;
+
 .include "../../include/breadbin.inc"
 .import print, eprint, fprint, fputc, argn, perr
 .import dec_str, pw_find_uid, pw_find_name, pw_name, pw_uid

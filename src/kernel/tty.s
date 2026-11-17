@@ -26,6 +26,10 @@
 ; serial bus code calls tty_hold before each step; it turns the receive
 ; interrupt and RTS off (the other side should stop sending; the chip
 ; keeps one byte) for 3 jiffies, renewed on every call.
+;
+; vibed by Lenu
+;
+
 .include "k.inc"
 .import bg_stop, fd_install, sigint_fg, sigtstp_fg, p_pslot
 

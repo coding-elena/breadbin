@@ -21,6 +21,10 @@
 ; full the /tmp RAM disk on it is (SYS_FSINFO; the swap area that shares
 ; the expansion has no usage the kernel reports). The tasks line also has
 ; the free/total pages and the time since boot.
+;
+; vibed by Lenu
+;
+
 .include "../../include/breadbin.inc"
 .import print, eprint, dec_str
 

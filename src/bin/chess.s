@@ -2,6 +2,9 @@
 ; chess.s - Single-File 0x88 Chess for Breadbin Unix (ca65 / cx.py)
 ; Step 3: make_move / unmake_move + is_in_check + 1-ply AI opponent
 ; ============================================================================
+;
+; vibed by Lenu
+;
 
 .include "../../include/breadbin.inc"
 .import print, putc

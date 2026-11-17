@@ -9,6 +9,10 @@
 ; no disk). When it has gone, by CTRL-D or killed, this prints
 ; "talk: connection closed" and ends our talk. When our talk has gone
 ; first, this just exits. One page of memory.
+;
+; vibed by Lenu
+;
+
 .include "../../include/breadbin.inc"
 .import print, argn
 

@@ -25,6 +25,10 @@
 ; Ids are found by trying 1..9 (there is no directory listing call): a new
 ; message gets the highest id in use plus one; past 9 it takes the lowest
 ; free id. The date comes from SYS_CLOCK (local time) through src/lib/date.s.
+;
+; vibed by Lenu
+;
+
 .include "../../include/breadbin.inc"
 .import print, eprint, newline, print_dec, dec_str, argn, perr, set_input, getc
 .import ep2cal, dt_ep, dt_year, dt_mon, dt_day, dt_h, dt_m
