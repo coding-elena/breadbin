@@ -889,7 +889,7 @@ class NonBlockingTTY(unittest.TestCase):
 
 
 class EchoOptions(unittest.TestCase):
-    """echo -n (no newline) and -e (\\n \\e \\b \\xHH \\\\). On the console the
+    """echo -n (no newline) and -e (\\n \\e \\b \\a \\xHH \\\\). On the console the
     backslash is the pound key; the test types it as PETSCII $5c."""
 
     @classmethod
@@ -912,6 +912,7 @@ class EchoOptions(unittest.TestCase):
         self.assertIn("61 0a 62 0a", self.hex(r"-e a\nb"))
         self.assertIn("1b 52 68 69 1b 72 0a", self.hex(r"-e \eRhi\er"))
         self.assertIn("61 08 62 0a", self.hex(r"-e a\bb"))
+        self.assertIn("61 07 62 0a", self.hex(r"-e a\ab"))
         self.assertIn("41 6a 07 0a", self.hex(r"-e \x41\x6A\x7"))
 
     def test_other_backslashes_print_as_typed(self):

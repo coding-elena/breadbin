@@ -1,6 +1,6 @@
 ; echo [-n] [-e] [args]: print arguments
 ;   -n  no newline at the end
-;   -e  read \n \e \b \xHH \\ in the arguments
+;   -e  read \n \e \b \a \xHH \\ in the arguments
 ; Each option is its own argument. The first argument that is not
 ; exactly -n or -e is text, and so is everything after it.
 ; Branches only (no jmp/jsr inside the program): no relocations.
@@ -82,6 +82,9 @@ od   = $2a          ; nonzero: past the options
         beq @x
         ldx #$08
         cmp #'b'
+        beq @x
+        ldx #$07
+        cmp #'a'
         beq @x
         cmp #$5c
         beq @put
