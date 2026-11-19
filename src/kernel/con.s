@@ -44,6 +44,18 @@ con_init:
         sta lb_ready
         sta cur_on
         sta cur_vis
+        ; SID voice 3 for the bell ($07): a ~1 kHz triangle whose envelope
+        ; dies out by itself (sustain 0). con_putc only retriggers the gate.
+        sta $d40e           ; frequency low byte
+        sta $d414           ; sustain 0, release 0
+        lda #$40
+        sta $d40f           ; frequency high byte
+        lda #$09
+        sta $d413           ; attack 0, decay 9 (~250 ms)
+        lda #$10
+        sta $d412           ; triangle, gate off
+        lda #$0f
+        sta $d418           ; master volume 15, no filter
         lda #$80
         sta $028a           ; key repeat for all keys
         rts
@@ -114,10 +126,17 @@ con_putc:
         ldx esc_st
         bne @esc
         cmp #$1b
-        bne @norm
+        bne @bel
         lda #1
         sta esc_st
         bne @skip
+@bel:   cmp #$07            ; BEL: retrigger SID voice 3 (set up in con_init)
+        bne @norm
+        ldx #$10
+        stx $d412           ; gate off: resets the envelope
+        inx
+        stx $d412           ; gate on: beep
+        bne @skip           ; X = $11: always taken
 @norm:  jsr to_petscii
         beq @skip
         jsr CHROUT

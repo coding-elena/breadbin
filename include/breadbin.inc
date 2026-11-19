@@ -83,6 +83,7 @@ argc = $22
 O_RDONLY = $00
 O_WRONLY = $01
 O_RDWR   = $02
+O_NONBLOCK = $08     ; /dev/ttyS0: read returns EAGAIN instead of waiting
 O_CREAT  = $10
 O_TRUNC  = $20
 O_APPEND = $40

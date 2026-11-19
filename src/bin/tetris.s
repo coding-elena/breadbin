@@ -48,6 +48,25 @@ start:
         sta rng_state
 @seeded:
 
+        ; On the serial line the KERNAL keyboard buffer stays empty: read the
+        ; line through /dev/tty opened O_NONBLOCK instead (EAGAIN = no key).
+        ; If that open fails, fd 0 still works, but each read waits for a key.
+        lda #0
+        jsr SYS_ISATTY
+        bcs @kbd
+        cpx #1
+        bne @kbd
+        stx on_serial
+        lda #<tty_path
+        sta r0
+        lda #>tty_path
+        sta r0+1
+        lda #(O_RDONLY | O_NONBLOCK)
+        jsr SYS_OPEN
+        bcs @kbd
+        sta key_fd
+@kbd:
+
         ; Enable raw terminal input so single keys take effect immediately
         lda #1
         jsr SYS_CONMODE
@@ -65,10 +84,17 @@ start:
         sta last_tick
 
 main_loop:
-        ; Never block in read: only read a key when the KERNAL buffer has one.
+        ; Never block in read. On the console, only read a key when the
+        ; KERNAL buffer has one; on the serial line the read itself says
+        ; (carry set: none yet).
+        lda on_serial
+        bne @ser
         lda KBNDX
         bne @key
-        jsr SYS_YIELD       ; idle: let other processes run
+        beq @idle
+@ser:   jsr read_key
+        bcc @got
+@idle:  jsr SYS_YIELD       ; idle: let other processes run
         lda JIFFY
         sec
         sbc last_tick       ; elapsed jiffies (wraps correctly mod 256)
@@ -76,7 +102,7 @@ main_loop:
         bcc main_loop
         jmp move_down       ; gravity tick
 @key:   jsr read_key        ; A = key code
-        cmp #'q'
+@got:   cmp #'q'
         beq @quit
         cmp #'Q'
         beq @quit
@@ -236,7 +262,8 @@ draw_cell:
         lda glyphs,y
         jmp SYS_PUTC
 
-; read_key: read 1 byte from stdin (fd 0) -> A ('q' on error/EOF)
+; read_key: read 1 byte from key_fd -> A, carry clear ('q' on error/EOF);
+; carry set if nothing has been typed yet (EAGAIN, O_NONBLOCK only)
 read_key:
         lda #<key_buf
         sta r0
@@ -246,13 +273,18 @@ read_key:
         sta r1
         lda #0
         sta r1+1
-        lda #0              ; fd 0 = stdin
+        lda key_fd
         jsr SYS_READ
-        bcs @eof
+        bcs @err
+        lda r1
+        beq @eof            ; end of file (CTRL-D)
         lda key_buf
         rts
+@err:   cmp #EAGAIN
+        beq @none
 @eof:   lda #'q'
-        rts
+        clc
+@none:  rts
 
 ; ----------------------------------------------------------------------
 ; Board & rendering
@@ -621,6 +653,9 @@ base:       .byte 0
 cleared:    .byte 0
 last_tick:  .byte 0
 key_buf:    .byte 0
+key_fd:     .byte 0     ; where keys come from: fd 0, or /dev/tty opened O_NONBLOCK
+on_serial:  .byte 0     ; 1: playing on the serial line (no KBNDX to look at)
+tty_path:   .byte "/dev/tty", 0
 clk_buf:    .res 4
 score:      .word 0
 board:      .res BOARD_W * BOARD_H

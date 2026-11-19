@@ -19,6 +19,7 @@ argsz:    .res 2
 nargs:    .res 1
 dst:      .res 2
 sp_slot:  .res 1
+argp:     .res 2        ; argv in the new image: base + img + bss
 
 .segment "BSS"
 sp_in:    .res 1        ; open-file entries for child fd 0/1/2
@@ -33,20 +34,14 @@ rbuf:     .res 128
 rcnt:     .res 1
 kargv:    .res 4        ; argv for kernel spawn: {path, NULL}
 
-.segment "CODE"
+.segment "INIT"         ; boot only (kernel.cfg)
 ; spawn_kernel: A/X = path (kernel memory). Starts init with console fds.
+; Called once, from boot_run. Everything here runs before load_prog takes
+; pool pages (which may be these): it jumps into resident code, and the
+; final rts of spawn_common returns straight to boot_run.
 spawn_kernel:
         sta r0
         stx r0+1
-        sta kargv
-        stx kargv+1
-        lda #0
-        sta kargv+2
-        sta kargv+3
-        lda #<kargv
-        sta r1
-        lda #>kargv
-        sta r1+1
         ldx con_file
         stx sp_in
         stx sp_out
@@ -55,8 +50,9 @@ spawn_kernel:
         sta sp_flags
         lda #0
         sta sp_pgrp
-        jmp spawn_common
+        jmp spawn_noargv
 
+.segment "CODE"
 ; spawn(r0 = path, r1 = argv, A = stdin fd, X = stdout fd, Y = flags)
 sys_spawn:
         pha
@@ -68,11 +64,11 @@ sys_spawn:
         pla
         stx sp_out
         jsr fd_get
-        bcs @r
+        bcs spawn_ret
         stx sp_in
         lda sp_out
         jsr fd_get
-        bcs @r
+        bcs spawn_ret
         stx sp_out
         lda sp_flags        ; stderr: fd r2+1 with SP_ERR, else our fd 2
         and #SP_ERR
@@ -87,7 +83,7 @@ sys_spawn:
         lda r1
         ora r1+1
         bne spawn_common
-        ; no argv given: use {path}
+spawn_noargv:           ; no argv given: use {path} (spawn_kernel too)
         lda r0
         sta kargv
         lda r0+1
@@ -98,9 +94,7 @@ sys_spawn:
         lda #<kargv
         sta r1
         lda #>kargv
-        sta r1+1
-        jmp spawn_common
-@r:     rts
+        sta r1+1            ; on into spawn_common
 
 spawn_common:
         ; free slot
@@ -114,10 +108,11 @@ spawn_common:
         rts
 @slot:  stx sp_slot
         jsr load_prog
-        bcs @r2
+        bcs spawn_ret
         jsr setup_proc
         clc
-@r2:    rts
+spawn_ret:
+        rts
 
 ; exec(r0 = path, r1 = argv): this process becomes that program, keeping
 ; its pid, parent, job, flags, descriptors and working directory. The new
@@ -158,21 +153,15 @@ load_prog:
         bcs @r
         ldx nm_dev
         lda dev_type,x      ; programs only run from c64fs
-        beq @c64
-        lda #ENOEXEC
-        sec
-        rts
-@c64:   lda nm_dev
+        bne @noexec
+        lda nm_dev
         ldx nm_ino
         jsr iget
         bcs @r
         lda ci+I_TYPE
         cmp #T_FILE
-        beq @isf
-        lda #ENOEXEC
-        sec
-@r:     rts
-@isf:   lda #0
+        bne @noexec
+        lda #0
         sta f_off
         sta f_off+1
         sta f_off+2
@@ -201,7 +190,7 @@ load_prog:
 @noexec:
         lda #ENOEXEC
         sec
-        rts
+@r:     rts
 @hok:   ldx #5
 @hc:    lda hdr+3,x
         sta img_sz,x
@@ -209,20 +198,20 @@ load_prog:
         bpl @hc
         jsr measure_args
         bcs @r
-        ; npages = ceil((img + bss + args) / 256)
+        ; npages = ceil((img + bss + args) / 256); argp = img + bss for now
         lda img_sz
         clc
         adc bss_sz
-        sta dst
+        sta argp
         lda img_sz+1
         adc bss_sz+1
-        sta dst+1
+        sta argp+1
         bcs @nomem
-        lda dst
+        lda argp
         clc
         adc argsz
         sta dst
-        lda dst+1
+        lda argp+1
         adc argsz+1
         bcs @nomem
         ldx dst
@@ -238,6 +227,9 @@ load_prog:
         sec
         rts
 @mem:   sta base
+        clc
+        adc argp+1
+        sta argp+1          ; argp = base + img + bss
         ; load the image
         lda #9
         sta f_off
@@ -397,11 +389,8 @@ measure_args:
 @nc:    inc nargs
         lda nargs
         cmp #MAXARGS
-        bcc @nx
-        lda #E2BIG
-        sec
-        rts
-@nx:    lda p1
+        bcs @big
+        lda p1
         clc
         adc #2
         sta p1
@@ -422,14 +411,9 @@ measure_args:
 ; copy_args: build argv at base + img + bss: pointer array, then strings
 copy_args:
         ; p3 = array start
-        lda img_sz
-        clc
-        adc bss_sz
+        lda argp
         sta p3
-        lda img_sz+1
-        adc bss_sz+1
-        clc
-        adc base
+        lda argp+1
         sta p3+1
         ; dst = string area = p3 + 2*(n+1)
         lda nargs
@@ -610,15 +594,10 @@ init_context:
         iny
         cpy #ZPSAVE
         bne @z
-        lda img_sz
-        clc
-        adc bss_sz
+        lda argp
         ldy #argv-2
         sta (p3),y
-        lda img_sz+1
-        adc bss_sz+1
-        clc
-        adc base
+        lda argp+1
         iny
         sta (p3),y
         lda nargs
