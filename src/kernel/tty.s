@@ -301,11 +301,15 @@ tty_read:
 @go:    lda #<tty_rw
         ldx #>tty_rw
         jsr tcall
+        bmi @again          ; nothing to read, opened with O_NONBLOCK
         bne @d
         lda #CH_TTY
         jsr block_on
         jmp @w
 @d:     clc
+        rts
+@again: lda #EAGAIN
+        sec
         rts
 
 ; ---------------------------------------------------------------------
@@ -596,7 +600,13 @@ tty_rd: lda t_raw
         sta r1+1
         lda #1
         rts
-@wait:  lda #0
+@wait:  ldx sb6             ; the open file (sys_read; saved per process)
+        lda f_flags,x
+        and #O_NONBLOCK
+        beq @blk
+        lda #$ff            ; don't wait: tty_read returns EAGAIN
+        rts
+@blk:   lda #0
         rts
 @cooked:
         lda lb_ready

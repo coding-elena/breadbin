@@ -11,7 +11,7 @@ Kernel RAM (`$8500-$CEFF`) has about 34 free bytes, and kernel zero page none: v
 | Kernel RAM | 33 bytes | 12 `jsr` hooks (one replaces an instruction of the same size), nothing else |
 | `LOWDATA`: `$02A7-$02FF` (unused by the KERNAL) | ≤ 89 bytes | variables, `tty_of`, `tty_irqhook`, `tty_athook`, `tty_rdhook` |
 | `LOWCODE`: `$0334-$03FF` (the cassette buffer; Breadbin never uses tape) | ≤ 204 bytes | the other hooks |
-| `JTCODE`: the end of the `$CF00` jump table page | ≤ 88 bytes | `tcall`, `tty_hold`, `tty_read`/`tty_write` |
+| `JTCODE`: the end of the `$CF00` jump table page | ≤ 88 bytes (87 used) | `tcall`, `tty_hold`, `tty_read`/`tty_write` |
 | `HICODE` / `TTYBSS` (under the KERNAL ROM) | ~1.6 KB + 355 bytes | the driver, the rings, the line discipline, the ANSI translation |
 
 `LOWCODE` and `LOWDATA` are copied down by `tty_boot` before kmain sets the NMI vector. `JTCODE` is copied up with the jump table page. `HICODE` is copied with the swap code.
@@ -34,6 +34,8 @@ The hooks don't change what the code around them does when there is no card:
 `tcall` takes A/X = the routine and Y = its argument. It runs the routine with interrupts off and the ROM switched out (`MAP_RAM`), and returns its A with Z/N set.
 
 Code there may call kernel code that doesn't use the KERNAL (`wakeup`, `sigint_fg`), and the low hooks. It must never sleep. So `tty_read`/`tty_write` stay in `JTCODE`: they call `tty_rw` for one pass, and if it returns 0 they `block_on CH_TTY` and try again. Their state (`sb4`, `sb5`, `s0`, `s1`) is saved per process.
+
+A read of a file opened with `O_NONBLOCK` doesn't wait: where `tty_rd` would return 0, it looks at the open file's `f_flags` (entry `sb6`, set by `sys_read`) and returns `$FF` instead, and `tty_read` turns that into `EAGAIN`. Writes always wait.
 
 ## Which terminal a process is on: `tty_of`
 

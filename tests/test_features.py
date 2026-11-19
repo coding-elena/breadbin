@@ -821,5 +821,116 @@ class Talk(unittest.TestCase):
         self.assertEqual(self.v.run("talk user < /etc/motd; echo $?").splitlines()[-1], "1")
 
 
+class NonBlockingTTY(unittest.TestCase):
+    """open("/dev/tty", O_NONBLOCK) on the serial line: a read with nothing
+    typed returns EAGAIN instead of waiting (tests/progs/nbread.s)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.peer = SerialPeer()
+        cls.v = Vice(copy_image("nbtty"), extra=cls.peer.vice_args())
+        try:
+            cls.peer.accept()
+            cls.peer.wait_for("login:")
+            cls.peer.send("user\r")
+            cls.peer.wait_for("$ ")
+        except Exception:
+            cls.v.close()
+            cls.peer.close()
+            raise
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.v.close()
+        cls.peer.close()
+
+    def test_raw_returns_eagain_then_the_key(self):
+        m = self.peer.mark()
+        self.peer.send("/test/nbread raw\r")
+        m = self.peer.wait_for("again", m)          # nothing typed: no waiting
+        self.peer.send("x")
+        m = self.peer.wait_for("got:x", m)
+        self.peer.wait_for("$ ", m)
+        m = self.peer.mark()                        # and fd 0 still blocks: the
+        self.peer.send('echo o"k"\r')               # shell reads a line as before
+        self.peer.wait_for("ok", m)                 # (the echoed command has o"k")
+
+    def test_cooked_waits_for_the_whole_line(self):
+        m = self.peer.mark()
+        self.peer.send("/test/nbread\r")
+        m = self.peer.wait_for("again", m)
+        self.peer.send("ab")                        # half a line: still EAGAIN
+        time.sleep(3)
+        self.assertNotIn("got:", self.peer.text()[m:])
+        self.peer.send("\r")
+        m = self.peer.wait_for("got:ab", m)
+        self.peer.wait_for("$ ", m)
+
+    def test_tetris_on_the_serial_line(self):
+        """tetris reads the line with O_NONBLOCK: pieces fall with no key
+        pressed, and keys typed there reach it (q quits)."""
+        m = self.peer.mark()
+        self.peer.send("tetris\r")
+        m = self.peer.wait_for("SCORE: ", m)
+        time.sleep(3)                               # ~6 gravity steps, no keys
+        self.assertGreater(self.peer.mark() - m, 30)
+        self.peer.send("q")
+        m = self.peer.wait_for("GAME OVER", m)
+        self.peer.wait_for("$ ", m)
+
+    def test_tetris_on_the_console(self):
+        """The console still uses the KERNAL keyboard buffer."""
+        self.v.wait_shell()
+        self.v.type("tetris\n")
+        self.v.wait_for("SCORE:")
+        self.v.type("q")
+        self.v.wait_for("GAME OVER")
+        self.assertEqual(self.v.run("echo ok"), "ok")
+
+
+class EchoOptions(unittest.TestCase):
+    """echo -n (no newline) and -e (\\n \\e \\b \\xHH \\\\). On the console the
+    backslash is the pound key; the test types it as PETSCII $5c."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.v = Vice(copy_image("echo"))
+        cls.v.wait_shell()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.v.close()
+
+    def hex(self, args):
+        return self.v.run("echo %s | hexdump" % args)
+
+    def test_plain_echo_keeps_backslashes(self):
+        self.assertEqual(self.v.run(r"echo a\nb"), r"a\nb")
+
+    def test_escapes(self):
+        self.assertEqual(self.v.run(r"echo -e a\nb"), "a\nb")
+        self.assertIn("61 0a 62 0a", self.hex(r"-e a\nb"))
+        self.assertIn("1b 52 68 69 1b 72 0a", self.hex(r"-e \eRhi\er"))
+        self.assertIn("61 08 62 0a", self.hex(r"-e a\bb"))
+        self.assertIn("41 6a 07 0a", self.hex(r"-e \x41\x6A\x7"))
+
+    def test_other_backslashes_print_as_typed(self):
+        out = self.hex(r"-e x\\y\q\x\ ")
+        self.assertIn("78 5c 79 5c 71 5c 78 5c", out)
+
+    def test_no_newline(self):
+        self.assertEqual(self.hex("-n hi"), "0000: 68 69                    hi")
+        self.assertIn("61 0a  ", self.hex(r"-n -e a\n"))
+        self.assertIn("61 0a  ", self.hex(r"-e -n a\n"))
+        self.assertEqual(self.v.run("echo -n; echo ok"), "ok")
+
+    def test_options_only_at_the_start(self):
+        self.assertEqual(self.v.run(r"echo a\nb -e"), r"a\nb -e")
+        self.assertEqual(self.v.run("echo -nx -e"), "-nx -e")
+        self.assertEqual(self.v.run("echo -ne x"), "-ne x")   # one option per argument
+        self.assertEqual(self.v.run("echo - x"), "- x")
+        self.assertEqual(self.v.run("echo -e"), "")
+
+
 if __name__ == "__main__":
     unittest.main()

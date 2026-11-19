@@ -99,6 +99,7 @@ Programs write the same bytes as on the console. The serial line translates them
 | LF | CR LF |
 | 8 (backspace) | `\b \b` (erases the character) |
 | 12 (form feed, `clear`) | `ESC [ H` `ESC [ 2 J` (cursor home, clear the screen) |
+| 7 (BEL) | BEL unchanged: the terminal beeps (the console beeps on the SID) |
 | `ESC = row col` (cursor to row 0–24, column 0–39) | `ESC [ row+1 ; col+1 H` (rows and columns past the screen are clamped, as on the console) |
 | `ESC R` / `ESC r` | `ESC [ 7 m` / `ESC [ m` (reverse video on / off) |
 | `ESC K` | `ESC [ K` (clear to the end of the line) |
@@ -117,6 +118,7 @@ Programs write the same bytes as on the console. The serial line translates them
 | `conmode` | acts on the terminal of your standard input |
 | `/dev/tty` | always the terminal you run on |
 | `/dev/ttyS0` | the serial line itself (`ENODEV` without the cartridge) |
+| `O_NONBLOCK` | opened with it, a read with nothing typed (cooked: no whole line yet) returns `EAGAIN` instead of waiting; serial line only |
 
 See [programming.md](programming.md).
 
