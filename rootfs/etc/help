@@ -4,9 +4,11 @@ files:  ls cat cp mv rm mkdir rmdir
 text:   echo grep wc tee tail sort
 system: ps htop kill jobs fg bg free df
         uptime date uname version
-        sleep clear theme
-users:  login whoami passwd talk
+        sleep clear theme fastfetch
+users:  login whoami passwd who
+        talk mail
 code:   basic as
+games:  chess tetris
 disks:  mount umount format fsck sync
 shell:  a | b  > f  >> f  < f  cmd &
         a ; b  *.bas  cd  exit
