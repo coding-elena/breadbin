@@ -3,7 +3,8 @@
 ;   mail user   write a message to user's mailbox
 ;   mail        read your unread messages, one at a time
 ;   mail -a     read all messages, the ones already read too
-;   mail -c     the login check: silent if nothing is unread, else as `mail`
+;   mail -c     the login check: "You have mail." if something is unread,
+;               else silent (mailc is the same check as a small program)
 ;
 ; The mailbox is the directory /tmp/mail/<user>. Every message is a file
 ; named by its id (1 to 9), so nothing is lost when a new one arrives:
@@ -12,9 +13,12 @@
 ;
 ; That is: the read flag (N = new, R = read) immediately followed by the
 ; subject, LF, the user name of the sender, LF, the date sent as text, LF,
-; and the text of the message (200 characters at most). Reading a message marks it R; after it you can
-; delete it or go on. A message that is not deleted stays, and `mail -a`
-; shows it again. /tmp/mail and the user's directory are created when
+; and the text of the message (200 characters at most). Reading shows, as in
+; Unix mail, "From <sender> <date>" and the subject, then waits for a key:
+; p prints the text and marks the message R (read), d deletes it, q quits,
+; anything else goes on to the next one, which stays N. A message that is not
+; deleted stays, and `mail -a` shows it again. /tmp/mail and the user's
+; directory are created when
 ; missing (/tmp itself exists).
 ;
 ; Writing: "Subject: " is asked for, then the text, ended by a line holding
@@ -30,8 +34,8 @@
 ;
 
 .include "../../include/breadbin.inc"
-.import print, eprint, newline, print_dec, dec_str, argn, perr, set_input, getc
-.import ep2cal, dt_ep, dt_year, dt_mon, dt_day, dt_h, dt_m
+.import print, eprint, newline, dec_str, argn, perr, set_input, getc
+.import ep2cal, dt_ep, dt_year, dt_mon
 .import pw_find_uid, pw_find_name, pw_name
 .importzp lp1
 
@@ -249,45 +253,35 @@ mkfrom: jsr SYS_GETUID
         rts
 
 ; mkdate: dbuf/dlen = "YYYY-MM-DD HH:MM", LF (local time, from SYS_CLOCK)
+; The year is always 4 digits (date.s covers 1970-2106). dt_mon, dt_day,
+; dt_h, dt_m are consecutive in date.s's BSS, so one loop walks them.
 mkdate: setr0 dt_ep
         lda #0
         jsr SYS_CLOCK
         jsr ep2cal
         lda dt_year
         ldx dt_year+1
-        jsr dec_str         ; A/X = the digits, Y = how many
+        jsr dec_str         ; A/X = the 4 digits
         sta mp
         stx mp+1
-        sty hlen
-        ldx #0
+        ldy #3
+@y:     lda (mp),y
+        sta dbuf,y
+        dey
+        bpl @y
+        ldx #4              ; next free byte of dbuf
         ldy #0
-@y:     cpy hlen
-        bcs @yd
-        lda (mp),y
+        sty hlen
+@f:     ldy hlen
+        lda dsep,y
         sta dbuf,x
         inx
-        iny
-        jmp @y
-@yd:    lda #'-'
-        sta dbuf,x
-        inx
-        lda dt_mon
+        lda dt_mon,y        ; month, day, hour, minute
         jsr put2
-        lda #'-'
-        sta dbuf,x
-        inx
-        lda dt_day
-        jsr put2
-        lda #' '
-        sta dbuf,x
-        inx
-        lda dt_h
-        jsr put2
-        lda #':'
-        sta dbuf,x
-        inx
-        lda dt_m
-        jsr put2
+        inc hlen
+        lda hlen
+        cmp #4
+        bcc @f
         lda #10
         sta dbuf,x
         inx
@@ -296,11 +290,12 @@ mkdate: setr0 dt_ep
 
 ; put2: A = 0..99 -> two digits at dbuf+X, X advanced
 put2:   ldy #0
+        sec
 @t:     cmp #10
         bcc @u
-        sbc #10             ; carry is set here
+        sbc #10
         iny
-        jmp @t
+        bcs @t
 @u:     pha
         tya
         ora #'0'
@@ -407,11 +402,15 @@ readmail:
         jsr SYS_GETUID      ; our name, as whoami finds it
         jsr pw_find_uid
         bcc @named
+        lda quiet           ; -c: silent
+        bne @done
         lda #<s_unknown
         ldx #>s_unknown
         jmp fail
 @named: jsr mkpath
         bcc @ok
+        lda quiet
+        bne @done
         lda #<s_badname
         ldx #>s_badname
         jmp fail
@@ -446,7 +445,8 @@ readmail:
         jmp SYS_EXIT
 
 ; showmsg: message `cur`, file `path`. If it exists and is new (or -a),
-; show it, mark it read and ask what next; shown = 1. Quitting exits.
+; show it and ask what next; shown = 1. s_fullbody 0: "From <sender> <date>"
+; and the subject; 1: the text too. p shows it in full and marks it read.
 showmsg:
         lda #0
         sta shown
@@ -454,74 +454,75 @@ showmsg:
         lda #O_RDONLY
         jsr SYS_OPEN
         bcc @open
-        rts                 ; no such message
+@no:    rts                 ; no such message
 @open:  sta fd
         jsr load
         lda fd
         jsr SYS_CLOSE
         lda tot
         ora tot+1
-        bne @nonempty
-        jmp @ret            ; an empty file
-@nonempty:
+        beq @no             ; an empty file
         lda mbuf
-        sta flag
         cmp #'N'
         beq @disp
         lda all
-        beq @ret            ; already read: skip it
-@disp:  inc shown
-        lda #<s_msg
-        ldx #>s_msg
+        beq @no             ; already read: skip it
+@disp:  lda quiet           ; mail -c: one unread message is enough
+        beq @new
+        lda #<s_havemail
+        ldx #>s_havemail
         jsr print
-        lda cur
-        ldx #0
-        jsr print_dec
-        jsr newline
-        lda #<s_subj
-        ldx #>s_subj
-        jsr print
-        lda #<mbuf          ; the subject follows the flag
-        clc
-        adc #1
-        sta mp
-        lda #>mbuf
-        adc #0
-        sta mp+1
-        jsr emitline
-        jsr newline
-        lda #<s_from
+        lda #0
+        jmp SYS_EXIT
+@new:   inc shown
+        lda #0
+        sta s_fullbody      ; a preview first
+@show:  jsr setmp           ; mp = the subject, which comes first
+        jsr skipline
+        lda #<s_from        ; "From <sender> <date>"
         ldx #>s_from
         jsr print
         jsr emitline        ; the sender line
-        jsr newline
-        lda #<s_date
-        ldx #>s_date
-        jsr print
+        lda #' '
+        jsr SYS_PUTC
         jsr emitline        ; the date line
-        lda #<s_nl2
-        ldx #>s_nl2
-        jsr print
+        jsr newline
+        jsr setmp
+        jsr emitline        ; the subject, mp = the sender line again
+        jsr newline
+        lda s_fullbody
+        beq @ask
+        jsr skipline        ; past the sender and the date
+        jsr skipline
+        jsr newline
         jsr emitrest        ; the text
-        lda flag
-        cmp #'N'
-        bne @ask
         jsr markread
 @ask:   jsr askkey
-        cmp #'d'
+        cmp #'p'
+        bne @nop
+        lda #1
+        sta s_fullbody
+        bne @show           ; again, in full
+@nop:   cmp #'d'
         bne @q
         setr0 path
         jsr SYS_UNLINK
         bcs @ret
         lda #<s_deleted
         ldx #>s_deleted
-        jsr print
-        rts
+        jmp print
 @q:     cmp #'q'
-        bne @ret
+        bne @ret            ; anything else: next
         lda #0
         jmp SYS_EXIT
 @ret:   rts
+
+; setmp: mp = the subject in mbuf, after the flag
+setmp:  lda #<(mbuf+1)
+        sta mp
+        lda #>(mbuf+1)
+        sta mp+1
+        rts
 
 ; load: the whole file (fd) into mbuf, tot bytes, then a 0 after it. Reads
 ; of 255 while less than 256 are in, so mbuf (512) cannot overflow.
@@ -564,9 +565,9 @@ load:   lda #0
         sta (mp),y          ; the end marker
         rts
 
-; emitline: write the bytes at mp up to the next LF (or the end) to
-; stdout, and move mp past that LF
-emitline:
+; lineend: hlen = length of the line at mp (up to the LF, the end marker or
+; 254 bytes)
+lineend:
         ldy #0
 @s:     lda (mp),y
         beq @e
@@ -576,10 +577,22 @@ emitline:
         cpy #254
         bcc @s
 @e:     sty hlen
-        tya
-        beq @adv
+        rts
+
+; emitline: write the bytes at mp up to the next LF (or the end) to
+; stdout, and move mp past that LF
+emitline:
+        jsr lineend
+        lda hlen
+        beq advance
         jsr emitn
-@adv:   lda mp
+        jmp advance
+
+; skipline: move mp past the line at mp without writing it
+skipline:
+        jsr lineend
+advance:
+        lda mp
         clc
         adc hlen
         sta mp
@@ -741,15 +754,14 @@ s_mdir:   .byte "/tmp/mail", 0
 s_tty:    .byte "/dev/tty", 0
 s_new:    .byte "N"
 s_rd:     .byte "R"
-s_msg:    .byte "Message ", 0
-s_from:   .byte "From: ", 0
+dsep:     .byte '-', '-', ' ', ':'
+s_from:   .byte "From ", 0
 s_subj:   .byte "Subject: ", 0
-s_date:   .byte "Date: ", 0
-s_nl2:    .byte 10, 10, 0
 s_hint:   .byte "Enter msg (max 200), end: . or CTRL-D", 10, 0
 s_limit:  .byte "200 chars limit reached", 10, 0
-s_ask:    .byte 10, "d)el, q)uit, else next: ", 0
+s_ask:    .byte 10, "p)rint, d)el, q)uit, else next: ", 0
 s_deleted: .byte "Message deleted.", 10, 0
+s_havemail: .byte "You have mail.", 10, 0
 s_nonew:  .byte "No new mail.", 10, 0
 s_nomail: .byte "No mail.", 10, 0
 s_nouser: .byte "mail: no such user", 10, 0
@@ -765,7 +777,7 @@ fd:      .res 1
 fd2:     .res 1
 shown:   .res 1
 seen:    .res 1
-flag:    .res 1
+s_fullbody: .res 1
 key:     .res 1
 hlen:    .res 1
 blen:    .res 1
