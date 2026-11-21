@@ -166,7 +166,7 @@ pinfo:  lda slot
 
 .segment "RODATA"
 s_console: .byte "console", 0
-s_tty:     .byte "tty", 0
+s_tty:     .byte "ttyS0", 0
 s_unk:     .byte "?", 0
 
 .segment "BSS"
