@@ -86,7 +86,7 @@ stub_copy:                  ; copy X pages ($fb) -> ($fd)
 
 ; ---------------------------------------------------------------------
 .segment "INIT"
-banner: .byte "breadbin 0.9", 10
+banner: .byte "breadbin 0.9.1", 10
         .byte "unix-like os by kpatronas@gmail.com", 10, 0
 s_mem:  .byte "memory: ", 0
 s_kb:   .byte " pages free", 10, 0

@@ -352,7 +352,7 @@ handlers:
         .word print_mem_str, print_serial, print_reu_str
 
 s_at_host:    .byte "@breadbin", 0
-s_os:         .byte "OS: breadbin 0.9", 0
+s_os:         .byte "OS: breadbin 0.9.1", 0
 s_kernel:     .byte "Kern: 6.1-breadbin", 0
 s_up_prefix:  .byte "Uptime: ", 0
 s_hours_mins: .byte "h ", 0
