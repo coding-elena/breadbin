@@ -107,15 +107,15 @@ Things to type at the `/ $` prompt:
 
 ```
 ls /bin
-cat /home/readme | grep unix | wc
+cat /home/user/readme | grep unix | wc
 mkdir /home/src ; cd /home/src ; echo hi > f ; ls -l
 count > /dev/null &
 ps
 kill 5                      (use the pid that ps shows)
 count                       (then CTRL-Z: it stops)
 jobs ; bg ; fg              (resume it; RUN/STOP ends it)
-basic /home/hello.bas
-as /home/hello.s /home/hello ; /home/hello
+basic /home/user/hello.bas
+as /home/user/hello.s /home/user/hello ; /home/user/hello
 df ; free
 edit /home/notes            (^O saves, ^X quits)
 mount 9 /mnt ; ls /mnt      (needs a disk in drive 9)
@@ -124,6 +124,12 @@ theme c64
 ```
 
 At the `login:` prompt, type `root` or `user`; neither has a password until you set one with `passwd`.
+
+**A second user over a serial line.** With a SwiftLink or Turbo232 cartridge, `init` also runs a `login` on `/dev/ttyS0` (9600 baud, 8N1), and someone at a PC terminal can work alongside the person at the C64. In VICE the line is a TCP connection: start `socat -,raw,echo=0 tcp-listen:25232`, then `make run-tty`. Files have no owners yet, so every user can change every file. The two users can chat with `talk`: one types `talk`, the other answers with `talk`, and each line goes straight to the other screen until either side presses CTRL-D. [docs/terminal.md](docs/terminal.md) has the details.
+
+`who` lists who is logged in, and `mail user` leaves a message that `mail` reads later (p prints it, d deletes it, q quits; `mail -a` shows the read ones again). Messages live in `/tmp/mail`, so they last until the next boot. `fastfetch` shows the machine, uptime, memory, theme and serial card at a glance.
+
+**Games.** `chess` plays against the computer: type moves as `e2e4`, `a` to let the computer make the move, `s` and `l` to save and load (`/tmp/chess.sav`), `q` to quit. `tetris`: `a`/`d` or the cursor keys move, `w` rotates, `s` steps down, space drops, `q` quits.
 
 On a C64 keyboard, `|` is **SHIFT + `-`**, and RUN/STOP interrupts the running command. In VICE that key combination only holds with the *positional* keyboard mapping; with the *symbolic* mapping (the default on most builds) press your keyboard's own `|` key, and `_` for an underscore.
 
@@ -139,7 +145,9 @@ The boot disk is mounted at `/`. More drives work too: put a disk in drive 9, 10
 
 ## Commands
 
-`sh` `init` `login` `ls [-l] [-a]` `cat` `echo` `grep [-v] [-c]` `wc` `head [-n]` `tail [-n]` `sort [-r]` `tee [-a]` `more` `edit` `touch` `cp` `mv` `rm` `mkdir` `rmdir` `pwd` `stat` `hexdump` `ps` `kill [-sig]` `sleep` `free` `df` `mount` `umount` `format` `fsck [-f] [dir]` `sync` `uptime` `date [yyyy-mm-dd] [hh:mm[:ss]]` `uname [-a]` `version` `whoami` `passwd` `theme` `help` `clear` `count` `basic` `as`
+`sh` `init` `login` `ls [-l] [-a]` `cat` `echo [-n] [-e]` `grep [-v] [-c]` `wc` `head [-n]` `tail [-n]` `sort [-r]` `tee [-a]` `more` `edit` `touch` `cp` `mv` `rm` `mkdir` `rmdir` `pwd` `stat` `hexdump` `ps` `htop` `kill [-sig]` `sleep` `free` `df` `mount` `umount` `format` `fsck [-f] [dir]` `sync` `uptime` `date [yyyy-mm-dd] [hh:mm[:ss]]` `uname [-a]` `version` `fastfetch` `whoami` `who` `passwd` `talk [user]` `mail [-a] [-c] [user]` `theme` `help` `clear` `count` `basic` `as` `chess` `tetris`
+
+`echo -n` leaves out the final newline (each option is a separate argument: `echo -n -e`, not `-ne`). `echo -e` turns `\n` (newline), `\e` (ESC), `\b` (backspace), `\a` (bell: a beep), `\xHH` (a byte in hex, one or two digits) and `\\` (a backslash) into their bytes and prints any other backslash as typed; ESC starts the console sequences listed in [docs/terminal.md](docs/terminal.md), so `echo -e "\eRhi\er"` prints in reverse video. On the C64 keyboard the backslash is the £ key.
 
 Shell built-ins: `cd`, `exit`, `kill`, `jobs`, `fg`, `bg`. CTRL-Z stops the foreground command. Cursor up and down recall earlier lines, and CTRL-I (TAB) completes a command or file name; pressed again, it lists the choices.
 
@@ -147,7 +155,7 @@ Shell built-ins: `cd`, `exit`, `kill`, `jobs`, `fg`, `bg`. CTRL-Z stops the fore
 
 | Path | What |
 |------|------|
-| `src/kernel/` | the kernel (ca65): `proc.s` scheduler, IRQ, signals · `jtab.s` syscall table at `$CF00` · `exec.s` loader · `file.s` fds, pipes, file syscalls · `fs.s` c64fs · `blk.s` block cache, 1541 and REU · `iec.s` serial bus driver · `drive.s` the sector-sending code that runs in the 1541 · `cbm.s` CBM DOS disks and mount · `con.s` console · `mem.s` page allocator |
+| `src/kernel/` | the kernel (ca65): `proc.s` scheduler, IRQ, signals · `jtab.s` syscall table at `$CF00` · `exec.s` loader · `file.s` fds, pipes, file syscalls · `fs.s` c64fs · `blk.s` block cache, 1541 and REU · `iec.s` serial bus driver · `drive.s` the sector-sending code that runs in the 1541 · `cbm.s` CBM DOS disks and mount · `con.s` console · `mem.s` page allocator · `tty.s` the serial terminal |
 | `src/bin/` | user programs |
 | `src/lib/` | the user library linked into programs |
 | `include/breadbin.inc` | the system-call interface for programs |
@@ -157,6 +165,7 @@ Shell built-ins: `cd`, `exit`, `kill`, `jobs`, `fg`, `bg`. CTRL-Z stops the fore
 | `tools/ptest.py` | runs the system tests in parallel, one VICE per test class |
 | `docs/filesystem.md` | disks, mounting, `format`, and the on-disk layout |
 | `docs/programming.md` | writing programs: system calls, the library, building, porting Unix tools |
+| `docs/terminal.md` | the serial terminal: a second user on `/dev/ttyS0` ([design](docs/design-tty.md)) |
 | `docs/superpowers/` | design spec and implementation plan |
 
 ## How it works
@@ -208,7 +217,7 @@ Extract a file from a disk image on the host:
 
 ```sh
 python3 tools/mkimage.py ls  build/breadbin.d64 /home
-python3 tools/mkimage.py cat build/breadbin.d64 /home/readme
+python3 tools/mkimage.py cat build/breadbin.d64 /home/user/readme
 ```
 
 ## License

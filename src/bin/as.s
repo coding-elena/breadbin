@@ -1396,6 +1396,7 @@ builtins:
         SYM "o_creat", O_CREAT
         SYM "o_trunc", O_TRUNC
         SYM "o_append", O_APPEND
+        SYM "o_nonblock", O_NONBLOCK
         .byte 0
 
 .segment "BSS"
