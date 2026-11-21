@@ -39,12 +39,12 @@ PALETTE = {"yellow": (0xed, 0xf1, 0x71), "grey": (0xa9, 0xa9, 0xa9)}
 
 SESSION = [
     "ls /bin",
-    "cat /home/readme | grep unix | wc",
+    "cat /home/user/readme | grep unix | wc",
     "count > /dev/null &",
     "ps",
     "mkdir /home/src ; cd /home/src",
     "echo hello from a c64 > f ; ls -l ; cat f",
-    "basic /home/hello.bas",
+    "basic /home/user/hello.bas",
     "df ; free",
     "theme c64",
     "uname -a",

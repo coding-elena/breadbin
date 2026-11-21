@@ -102,10 +102,9 @@ about 3.6k cycles.
 
 ## Things to look at
 
-1. **A stale test.** `tests/test_system.py`, `GeoRAM.test_georam_ramdisk`, copies `/home/readme`, which
-   `rootfs/home` doesn't have (only `alice` and `user`). Both `wc` calls report "no such file", and the
-   comparison fails only because the two messages wrap at different places on the 40-column screen. The
-   GeoRAM checks before it pass.
+1. **A stale test (fixed).** `GeoRAM.test_georam_ramdisk` copied `/home/readme` after the file moved to
+   `/home/user/readme`; the comparison failed only because the two "no such file" messages wrapped
+   differently. It now uses the new path.
 2. **The drive 8 copy is also on with a GeoRAM.** `blk_init` turns it on for 4 or more banks without
    checking `ram_type`. It works (same block numbering), but each copied block costs about 3.6k CPU
    cycles, and the README describes it for an REU only.

@@ -61,8 +61,8 @@ class Boot(unittest.TestCase):
         self.assertIn("welcome to breadbin.", out)
 
     def test_05_pipe_three_stages(self):
-        out = self.run_("cat /home/readme | grep unix | wc")
-        expect = subprocess.run("grep unix rootfs/home/readme | wc", shell=True, cwd=ROOT,
+        out = self.run_("cat /home/user/readme | grep unix | wc")
+        expect = subprocess.run("grep unix rootfs/home/user/readme | wc", shell=True, cwd=ROOT,
                                 capture_output=True, text=True).stdout.split()
         self.assertEqual(out.split(), expect)
 
@@ -108,7 +108,7 @@ class Boot(unittest.TestCase):
         self.assertIn("no such file", self.run_("cat /home/m2"))
 
     def test_11_head_pipe_early_exit(self):
-        out = self.run_("cat /home/readme | head -3 | wc")
+        out = self.run_("cat /home/user/readme | head -3 | wc")
         self.assertEqual(out.split()[0], "3")
 
     def test_12_sigpipe(self):
@@ -161,7 +161,7 @@ class Boot(unittest.TestCase):
         self.assertIn("not a directory", self.run_("ls /etc/motd/x"))
 
     def test_17_basic_script(self):
-        out = self.run_("basic /home/hello.bas")
+        out = self.run_("basic /home/user/hello.bas")
         self.assertIn("5 squared is 25", out)
         self.assertIn("fib: 0 1 1 2 3 5 8 13 21 34", out)
 
@@ -170,9 +170,9 @@ class Boot(unittest.TestCase):
         self.assertIn("division by zero", self.run_("echo 'print 1/0' | basic"))
 
     def test_19_assembler(self):
-        out = self.run_("as /home/hello.s /home/hello")
+        out = self.run_("as /home/user/hello.s /home/user/hello")
         self.assertIn("bytes", out)
-        self.assertEqual(self.run_("/home/hello"), "hello, world! (assembled on a c64)")
+        self.assertEqual(self.run_("/home/user/hello"), "hello, world! (assembled on a c64)")
 
     def test_20_more_pages(self):
         self.v.type("clear\n")
@@ -205,7 +205,7 @@ class Boot(unittest.TestCase):
         self.run_("theme green")
 
     def test_23_wildcards_and_jobs(self):
-        self.assertEqual(self.run_("echo /home/*.bas"), "/home/hello.bas")
+        self.assertEqual(self.run_("echo /home/user/*.bas"), "/home/user/hello.bas")
         self.assertEqual(self.run_("echo /bin/s?"), "/bin/sh")
         self.assertEqual(self.run_("echo /nomatch*"), "/nomatch*")
         pid = self.run_("sleep 999 &").strip("[]")
@@ -357,8 +357,8 @@ class GeoRAM(unittest.TestCase):
             v.wait_shell()
             self.assertIn("georam: 8 x 64k", v.screen())
             self.assertIn("georam:    512", v.run("free"))
-            v.run("cp /home/readme /tmp/r")
-            self.assertEqual(v.run("wc /tmp/r"), v.run("wc /home/readme").replace("/home/readme", "/tmp/r"))
+            v.run("cp /home/user/readme /tmp/r")
+            self.assertEqual(v.run("wc /tmp/r"), v.run("wc /home/user/readme").replace("/home/user/readme", "/tmp/r"))
             v.run("mkdir /tmp/d")
             v.run("echo hi > /tmp/d/x")
             self.assertEqual(v.run("cat /tmp/d/x"), "hi")
@@ -378,7 +378,7 @@ class Drives(unittest.TestCase):
             os.unlink(cbm)
         subprocess.run(["c1541", "-format", "cbmdisk,cb", "d64", cbm,
                         "-write", os.path.join(ROOT, "rootfs", "etc", "motd"), "motd,s",
-                        "-write", os.path.join(ROOT, "rootfs", "home", "readme"), "readme,s"],
+                        "-write", os.path.join(ROOT, "rootfs", "home", "user", "readme"), "readme,s"],
                        capture_output=True, check=True)
         with Vice(IMAGE, extra=["-drive9type", "1541", "-9", cbm]) as v:
             v.wait_shell()

@@ -55,8 +55,8 @@ def page(game):
 <div id="game"></div>
 <footer>
   <div class="login">Click the screen, then at <code>login:</code> type <code>root</code> and press Return.</div>
-  <div class="try">Try <code>ls /bin</code> · <code>help</code> · <code>cat /home/readme | grep unix | wc</code> ·
-  <code>ps</code> · <code>edit /home/notes</code> · <code>basic /home/hello.bas</code>.
+  <div class="try">Try <code>ls /bin</code> · <code>help</code> · <code>cat /home/user/readme | grep unix | wc</code> ·
+  <code>ps</code> · <code>edit /home/notes</code> · <code>basic /home/user/hello.bas</code>.
   The disk lives in RAM: changes last until you close the page.</div>
   <div class="credits">C64 emulation: <a href="https://vice-emu.sourceforge.io/" target="_blank">VICE</a> in
   <a href="https://emulatorjs.org/" target="_blank">EmulatorJS</a>, on the free

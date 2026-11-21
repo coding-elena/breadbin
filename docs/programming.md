@@ -45,11 +45,11 @@ msg:    .byte "hello, world", 10, 0
 
 Run `make`. The new command lands in `/bin` on `build/breadbin.d64`; boot it and type `hello2`.
 
-**On the C64 itself**, with Breadbin's own assembler. `/home/hello.s` is a ready-made example:
+**On the C64 itself**, with Breadbin's own assembler. `/home/user/hello.s` is a ready-made example:
 
 ```
-/ $ as /home/hello.s /home/hello
-/ $ /home/hello
+/ $ as /home/user/hello.s /home/user/hello
+/ $ /home/user/hello
 hello, world! (assembled on a c64)
 ```
 
@@ -284,7 +284,7 @@ This catches everything ordinary code does: `jsr`, `jmp`, absolute addressing, `
 - Syntax: `label: lda #<msg ; comment`, `name = expr`, `.byte 1, "text", >addr`, `.word expr`, `.res count`.
 - Operands: `#imm #<expr #>expr zp abs ,x ,y (zp,x) (zp),y (abs)`. Expressions: `$hex %bin decimal 'c'`, labels, `*`, `+` and `-`.
 - Predefined: `sys_exit` … `sys_fg` (every system call), `r0 r1 r2`, `argv argc`, `o_rdonly o_wronly o_rdwr o_creat o_trunc o_append`.
-- Limits: 6 KB of output, 180 symbols, no macros or include files. The user library can't be linked, so programs call the system directly (see `/home/hello.s`).
+- Limits: 6 KB of output, 180 symbols, no macros or include files. The user library can't be linked, so programs call the system directly (see `/home/user/hello.s`).
 
 It's a good tool for small utilities written on the machine. For anything big, use ca65.
 

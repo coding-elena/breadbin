@@ -107,15 +107,15 @@ Things to type at the `/ $` prompt:
 
 ```
 ls /bin
-cat /home/readme | grep unix | wc
+cat /home/user/readme | grep unix | wc
 mkdir /home/src ; cd /home/src ; echo hi > f ; ls -l
 count > /dev/null &
 ps
 kill 5                      (use the pid that ps shows)
 count                       (then CTRL-Z: it stops)
 jobs ; bg ; fg              (resume it; RUN/STOP ends it)
-basic /home/hello.bas
-as /home/hello.s /home/hello ; /home/hello
+basic /home/user/hello.bas
+as /home/user/hello.s /home/user/hello ; /home/user/hello
 df ; free
 edit /home/notes            (^O saves, ^X quits)
 mount 9 /mnt ; ls /mnt      (needs a disk in drive 9)
@@ -213,7 +213,7 @@ Extract a file from a disk image on the host:
 
 ```sh
 python3 tools/mkimage.py ls  build/breadbin.d64 /home
-python3 tools/mkimage.py cat build/breadbin.d64 /home/readme
+python3 tools/mkimage.py cat build/breadbin.d64 /home/user/readme
 ```
 
 ## License
