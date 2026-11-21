@@ -1,8 +1,10 @@
 """Tests for 0.4 features, run on the test image (tests/progs as /test)."""
 import os
 import re
+import socket
 import subprocess
 import sys
+import threading
 import time
 import unittest
 
@@ -660,6 +662,275 @@ class InodeAlloc(unittest.TestCase):
             self.assertEqual(v.run("/test/mkfiles c"), "1")
             self.assertEqual(v.run("ls c00"), "c00")
             self.assertEqual(v.run("fsck /tmp", timeout=300), "clean")
+
+
+class SerialPeer:
+    """The far end of the C64's serial line (a SwiftLink in VICE): VICE
+    connects to this TCP server when Breadbin turns DTR on."""
+
+    def __init__(self):
+        self.srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.srv.bind(("127.0.0.1", 0))
+        self.srv.listen(1)
+        self.port = self.srv.getsockname()[1]
+        self.conn = None
+        self.buf = b""
+        self.lock = threading.Lock()
+
+    def vice_args(self):
+        return ["-acia1", "-acia1base", "0xde00", "-acia1irq", "1", "-acia1mode", "1",
+                "-myaciadev", "0", "-rsdev1", "127.0.0.1:%d" % self.port, "-rsdev1baud", "9600"]
+
+    def accept(self, timeout=120):
+        self.srv.settimeout(timeout)
+        self.conn, _ = self.srv.accept()
+        threading.Thread(target=self._rx, daemon=True).start()
+
+    def _rx(self):
+        while True:
+            try:
+                d = self.conn.recv(4096)
+            except OSError:
+                return
+            if not d:
+                return
+            with self.lock:
+                self.buf += d
+
+    def text(self):
+        with self.lock:
+            return self.buf.decode("latin-1")
+
+    def mark(self):
+        return len(self.text())
+
+    def wait_for(self, s, since=0, timeout=90):
+        """Wait until `s` came over the line after position `since`; return
+        the position just after it."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            t = self.text()
+            i = t.find(s, since)
+            if i >= 0:
+                return i + len(s)
+            time.sleep(0.3)
+        raise TimeoutError("%r not on the serial line:\n%s" % (s, self.text()[since:][-800:]))
+
+    def send(self, s):
+        for ch in s:                  # one at a time, as a person types
+            self.conn.sendall(ch.encode("latin-1"))
+            time.sleep(0.02)
+
+    def close(self):
+        for s in (self.conn, self.srv):
+            try:
+                if s:
+                    s.close()
+            except OSError:
+                pass
+
+
+class Talk(unittest.TestCase):
+    """talk between the console (root) and the serial line (user): one
+    process an end, lines written straight to the other terminal."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.peer = SerialPeer()
+        cls.v = Vice(copy_image("talk"), reu=True, extra=cls.peer.vice_args())
+        try:
+            cls.peer.accept()
+            cls.peer.wait_for("login:")
+            cls.peer.send("user\r")
+            cls.peer.wait_for("$ ")
+            cls.v.wait_shell()
+        except Exception:
+            cls.v.close()
+            cls.peer.close()
+            raise
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.v.close()
+        cls.peer.close()
+
+    def key(self, code):
+        """One key into the C64's keyboard buffer (e.g. 4 = CTRL-D)."""
+        self.v._cmd("keybuf \\x%02x" % code)
+        self.v._cmd("x", wait=0.25)
+
+    def connect(self):
+        """The console calls, the serial line answers."""
+        self.v.run("echo")                          # a clear screen
+        m = self.peer.mark()
+        self.v.type("talk user\n")
+        self.v.wait_for("[Waiting for your party to respond]")
+        self.peer.wait_for("talk: connection requested by root@console", m)
+        self.peer.wait_for("talk: respond with: talk root", m)
+        m = self.peer.mark()
+        self.peer.send("talk root\r")
+        self.peer.wait_for("talk: connected", m)
+        self.v.wait_for("talk: connected")
+
+    def shell_back_on_serial(self, since):
+        self.peer.wait_for("$ ", since)
+
+    def test_chat_both_ways_and_ctrl_d(self):
+        self.connect()
+        m = self.peer.mark()
+        self.v.type("hello there\n")
+        self.peer.wait_for("root@console: hello there", m)
+        self.peer.send("hi back\r")
+        self.v.wait_for("user@tty: hi back")
+        m = self.peer.mark()
+        self.key(4)                                 # CTRL-D on the console
+        end = self.peer.wait_for("talk: connection closed", m)
+        self.shell_back_on_serial(end)              # its talk was ended too
+        self.assertEqual(self.v.run("echo ok"), "ok")
+        self.assertNotIn("talk.", self.v.run("ls /tmp"))   # nothing left behind
+
+    def test_other_end_killed(self):
+        self.connect()
+        m = self.peer.mark()
+        self.key(3)                                 # RUN/STOP: no goodbye
+        self.assertEqual(self.v.run("echo ok"), "ok")
+        end = self.peer.wait_for("talk: connection closed", m)   # its watcher saw
+        self.shell_back_on_serial(end)
+
+    def test_ctrl_d_on_the_serial_line(self):
+        self.connect()
+        m = self.peer.mark()
+        self.peer.send("\x04")
+        self.shell_back_on_serial(m)
+        self.v.wait_for("talk: connection closed")
+        self.assertEqual(self.v.run("echo ok"), "ok")
+
+    def test_no_answer(self):
+        m = self.peer.mark()
+        out = self.v.run("talk user", timeout=600)
+        self.assertIn("talk: no answer", out)
+        t = self.peer.text()[m:]
+        self.assertEqual(t.count("connection requested by"), 1)   # it asks only once
+        self.assertNotIn("talk.", self.v.run("ls /tmp"))
+
+    def test_errors(self):
+        self.assertIn("User not logged in", self.v.run("talk alice"))
+        self.assertIn("usage: talk user", self.v.run("talk a b"))
+        self.assertIn("usage: talk user", self.v.run("talk"))
+        self.assertEqual(self.v.run("talk user < /etc/motd; echo $?").splitlines()[-1], "1")
+
+
+class NonBlockingTTY(unittest.TestCase):
+    """open("/dev/tty", O_NONBLOCK) on the serial line: a read with nothing
+    typed returns EAGAIN instead of waiting (tests/progs/nbread.s)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.peer = SerialPeer()
+        cls.v = Vice(copy_image("nbtty"), extra=cls.peer.vice_args())
+        try:
+            cls.peer.accept()
+            cls.peer.wait_for("login:")
+            cls.peer.send("user\r")
+            cls.peer.wait_for("$ ")
+        except Exception:
+            cls.v.close()
+            cls.peer.close()
+            raise
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.v.close()
+        cls.peer.close()
+
+    def test_raw_returns_eagain_then_the_key(self):
+        m = self.peer.mark()
+        self.peer.send("/test/nbread raw\r")
+        m = self.peer.wait_for("again", m)          # nothing typed: no waiting
+        self.peer.send("x")
+        m = self.peer.wait_for("got:x", m)
+        self.peer.wait_for("$ ", m)
+        m = self.peer.mark()                        # and fd 0 still blocks: the
+        self.peer.send('echo o"k"\r')               # shell reads a line as before
+        self.peer.wait_for("ok", m)                 # (the echoed command has o"k")
+
+    def test_cooked_waits_for_the_whole_line(self):
+        m = self.peer.mark()
+        self.peer.send("/test/nbread\r")
+        m = self.peer.wait_for("again", m)
+        self.peer.send("ab")                        # half a line: still EAGAIN
+        time.sleep(3)
+        self.assertNotIn("got:", self.peer.text()[m:])
+        self.peer.send("\r")
+        m = self.peer.wait_for("got:ab", m)
+        self.peer.wait_for("$ ", m)
+
+    def test_tetris_on_the_serial_line(self):
+        """tetris reads the line with O_NONBLOCK: pieces fall with no key
+        pressed, and keys typed there reach it (q quits)."""
+        m = self.peer.mark()
+        self.peer.send("tetris\r")
+        m = self.peer.wait_for("SCORE: ", m)
+        time.sleep(3)                               # ~6 gravity steps, no keys
+        self.assertGreater(self.peer.mark() - m, 30)
+        self.peer.send("q")
+        m = self.peer.wait_for("GAME OVER", m)
+        self.peer.wait_for("$ ", m)
+
+    def test_tetris_on_the_console(self):
+        """The console still uses the KERNAL keyboard buffer."""
+        self.v.wait_shell()
+        self.v.type("tetris\n")
+        self.v.wait_for("SCORE:")
+        self.v.type("q")
+        self.v.wait_for("GAME OVER")
+        self.assertEqual(self.v.run("echo ok"), "ok")
+
+
+class EchoOptions(unittest.TestCase):
+    """echo -n (no newline) and -e (\\n \\e \\b \\a \\xHH \\\\). On the console the
+    backslash is the pound key; the test types it as PETSCII $5c."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.v = Vice(copy_image("echo"))
+        cls.v.wait_shell()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.v.close()
+
+    def hex(self, args):
+        return self.v.run("echo %s | hexdump" % args)
+
+    def test_plain_echo_keeps_backslashes(self):
+        self.assertEqual(self.v.run(r"echo a\nb"), r"a\nb")
+
+    def test_escapes(self):
+        self.assertEqual(self.v.run(r"echo -e a\nb"), "a\nb")
+        self.assertIn("61 0a 62 0a", self.hex(r"-e a\nb"))
+        self.assertIn("1b 52 68 69 1b 72 0a", self.hex(r"-e \eRhi\er"))
+        self.assertIn("61 08 62 0a", self.hex(r"-e a\bb"))
+        self.assertIn("61 07 62 0a", self.hex(r"-e a\ab"))
+        self.assertIn("41 6a 07 0a", self.hex(r"-e \x41\x6A\x7"))
+
+    def test_other_backslashes_print_as_typed(self):
+        out = self.hex(r"-e x\\y\q\x\ ")
+        self.assertIn("78 5c 79 5c 71 5c 78 5c", out)
+
+    def test_no_newline(self):
+        self.assertEqual(self.hex("-n hi"), "0000: 68 69                    hi")
+        self.assertIn("61 0a  ", self.hex(r"-n -e a\n"))
+        self.assertIn("61 0a  ", self.hex(r"-e -n a\n"))
+        self.assertEqual(self.v.run("echo -n; echo ok"), "ok")
+
+    def test_options_only_at_the_start(self):
+        self.assertEqual(self.v.run(r"echo a\nb -e"), r"a\nb -e")
+        self.assertEqual(self.v.run("echo -nx -e"), "-nx -e")
+        self.assertEqual(self.v.run("echo -ne x"), "-ne x")   # one option per argument
+        self.assertEqual(self.v.run("echo - x"), "- x")
+        self.assertEqual(self.v.run("echo -e"), "")
 
 
 if __name__ == "__main__":
