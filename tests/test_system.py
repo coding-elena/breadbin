@@ -203,6 +203,7 @@ class Boot(unittest.TestCase):
         self.assertIn("0000: 77 65 6c 63", self.run_("hexdump /etc/motd | head -1"))
         self.assertIn("themes:", self.run_("theme nosuch"))
         self.run_("theme green")
+        self.assertIn("Theme: green", self.run_("fastfetch"))
 
     def test_23_wildcards_and_jobs(self):
         self.assertEqual(self.run_("echo /home/*.bas"), "/home/hello.bas")
