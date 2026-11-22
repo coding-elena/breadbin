@@ -26,6 +26,15 @@ serial: on, /dev/ttyS0 9600 8n1
 
 If Breadbin is using GeoRAM, it shows `serial: off (georam is at $de00)`. With no card, there is no `serial:` line at all.
 
+### Modems
+
+At boot, after finding the card, Breadbin sends `AT` and waits about 0.4 s for `OK`. If a Hayes-style modem answers (tcpser, a WiFi modem), the line is marked as a **modem line**:
+- no `login` is started on `/dev/ttyS0`;
+- the line itself still works, so a program can open `/dev/ttyS0` and talk to the modem (dial, answer);
+- this is checked only at boot: switch the modem on before the C64.
+
+A card with a plain terminal or nothing attached doesn't answer, so it gets a login as before. The check raises DTR for a moment (in VICE this connects the TCP line, as the boot does anyway).
+
 ## Trying it in VICE
 
 VICE emulates the SwiftLink and joins its serial line to a TCP connection. **VICE connects out**, so start the listener first.
@@ -51,6 +60,22 @@ Notes:
 - `+georam` makes sure GeoRAM is off even when your saved VICE settings turn it on. With GeoRAM on, VICE never shows the SwiftLink to the C64.
 - VICE connects only once, at boot. If it is restarted, restart socat too, and before it.
 - socat in raw mode passes CTRL-C on to the C64, so close its window to stop it.
+
+## A modem in VICE: tcpser
+
+[tcpser](https://github.com/FozzTexx/tcpser) emulates a Hayes modem over TCP. Run it instead of socat, and start it before VICE (VICE connects out, as above):
+
+```
+tcpser -v 25232 -s 9600 -l 4
+```
+
+- `-v 25232`: tcpser listens on this port for the emulator's serial line (the same port as `-rsdev1` below).
+- `-s 9600`: the line speed, matching Breadbin's 9600 baud.
+- `-l 4`: log level; the log shows the `AT` command Breadbin sends at boot.
+
+Then start the C64 with the same options as before (`make run-tty`, or the `x64sc` line with `-rsdev1 127.0.0.1:25232 -rsdev1baud 9600`).
+
+At boot tcpser answers the `AT` with `OK`, so Breadbin marks the line as a modem line: **no `login:` is started** on `/dev/ttyS0`, and the line is left free for a program that talks to the modem. If tcpser isn't running (or you use socat), the line gets its login as before.
 
 ## On a real C64
 

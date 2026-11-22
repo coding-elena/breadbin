@@ -149,7 +149,18 @@ One input byte can become up to 8 output bytes (`ESC [ 2 5 ; 4 0 H`), so `tx_roo
 
 Plain RAM, or nothing at all, can't do both.
 
-DTR stays off until the end, because VICE opens and closes its TCP line with DTR.
+DTR stays off until the card is confirmed, because VICE opens and closes its TCP line with DTR. Then `modem_probe` raises it (the 6551 doesn't receive with DTR off) for the modem probe below, and the final command write leaves it on.
+
+### Finding a modem
+
+Right after the card is confirmed, `tty_init` calls `modem_probe` (INIT segment, polled, receive IRQ off):
+1. raises DTR (command `$0B`) and drops a stale byte;
+2. sends `AT` CR, waiting for TDRE before each byte;
+3. polls RDRF for about 0.4 s (128 x 256 polls at 1 MHz) for an `O` followed by a `K`. This matches a bare `OK` and an echoed `AT` before it.
+
+It returns `$C0` (modem) or `$80` (plain card), and `tty_init` stores that in `tty_on`: **bit 7** is "a card was found", **bit 6** is "a Hayes-style modem (tcpser, a WiFi modem) answered". All the driver's tests are `bit tty_on` / `bpl` / `bmi`, so bit 6 changes nothing for the driver: the line works as before, and other programs can use it (for example to dial). The probe runs before `tty_on` bit 7 is set, so the NMI and IRQ hooks are still inert while it polls.
+
+The probe runs once, at boot. A modem attached later isn't detected, and a plain card with nothing on it costs 0.4 s of boot time. Its one scratch byte (`mp_b`, the previous byte read) is inside the INIT code, so it takes no resident RAM; INIT grows by about 50 bytes, which the pool gets back after boot.
 
 `CTL_SPEED = $1C` is 9600 baud on a SwiftLink (double-speed crystal).
 
@@ -157,8 +168,11 @@ DTR stays off until the end, because VICE opens and closes its TCP line with DTR
 
 `init` opens `/dev/ttyS0` (only with `/etc/passwd`: the line never gets a shell without a password). It runs `login` on it with `SP_IGNINT | SP_ERR`, and starts it again when it exits. If the open fails, it doesn't try again.
 
+**Not on a modem line.** `tty_up` first tests bit 6 of `tty_on` (`$02A7`, LOWDATA, a fixed address): when a modem was detected it returns at once, so no login is started and the line isn't even opened. A modem line is for dialling out or for a program of its own, not for a login nobody is attached to.
+
 ## Not done / not verified
 
+- The modem probe is written but not run: not tested against tcpser or a real modem, and the 0.4 s window may be short for a slow one.
 - DCD-based hangup is written but not tested: VICE may not drop DCD when the TCP peer goes away.
 - Open ROMs (MEGA65): not checked whether they leave `$02A7-$02FF` and the cassette buffer alone.
 - Multi-user safety: c64fs has no owners or permissions.

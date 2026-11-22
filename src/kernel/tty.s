@@ -53,7 +53,7 @@ TXNEED    = 8           ; room one translated byte may need (ESC [ 2 5 ; 4 0 H)
 ; ---------------------------------------------------------------------
 ; LOWDATA ($02A7-$02FF): variables (copied at boot: all start at 0)
 .segment "LOWDATA"
-tty_on:   .byte 0       ; bit 7: a card was found at boot
+tty_on:   .byte 0       ; bit 7: a card was found at boot, bit 6: a modem answered AT
 tty_st:   .byte 0       ; ACIA status, as the NMI hook read it
 tvec:     .word 0       ; tcall's target
 hold_cnt: .byte 0       ; jiffies left of a disk hold (0 = none)
@@ -354,6 +354,8 @@ tty_init:
         bne @no             ; plain RAM (or nothing) would still read $02
         lda #CTL_SPEED
         sta ACIA_CTL
+        jsr modem_probe     ; A = $80, or $c0 when a modem answered
+        sta mp_b
         php
         sei
         lda #MAP_RAM        ; TTYBSS is under the ROM: clear its variables
@@ -371,9 +373,52 @@ tty_init:
         plp
         lda #CMD_IDLE
         sta ACIA_CMD
-        lda #$80
-        sta tty_on
+        lda mp_b
+        sta tty_on          ; bit 7 card, bit 6 modem (no login on a modem line)
 @no:    rts
+
+; modem_probe: send "AT\r" and look for "OK" (a Hayes modem, tcpser). Polled,
+; with the chip's interrupts off and the NMI hooks still inert (tty_on is
+; not set yet). DTR is raised for the receiver; a modem answers commands
+; without it, but the 6551 does not receive with DTR off.
+; Out: A = $c0 modem, $80 plain card. About 0.4 s when nothing answers.
+modem_probe:
+        lda #$0b            ; DTR on, receive IRQ off
+        sta ACIA_CMD
+        lda ACIA_DATA       ; drop a stale byte
+        ldx #2
+@tx:    lda ACIA_ST
+        and #$10            ; TDRE
+        beq @tx
+        lda at_cr,x
+        sta ACIA_DATA
+        dex
+        bpl @tx
+        ldy #0
+        ldx #$80            ; 128 * 256 polls
+@w:     lda ACIA_ST
+        and #$08            ; RDRF
+        bne @got
+@t:     dey
+        bne @w
+        dex
+        bne @w
+        lda #$80
+        rts
+@got:   lda ACIA_DATA
+        cmp #'K'
+        bne @nk
+        lda mp_b
+        cmp #'O'
+        bne @nk
+        lda #$c0
+        rts
+@nk:    sta mp_b
+        bne @w              ; (Z is still clear from the compares above)
+
+; AT\r, last byte first. mp_b is the previous byte read (RAM in INIT).
+at_cr:  .byte 13, 'T', 'A'
+mp_b:   .byte 0
 
 ; ---------------------------------------------------------------------
 ; under the KERNAL ROM

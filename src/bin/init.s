@@ -4,6 +4,8 @@
 .include "../../include/breadbin.inc"
 .import print, eprint, perr, write_buf
 
+tty_on = $02a7          ; LOWDATA (tty.s)
+
 .segment "CODE"
 start:
         lda #<theme_path    ; apply the saved colour theme
@@ -79,7 +81,9 @@ start:
 
 ; tty_up: a login on /dev/ttyS0, if there is none running. Only with
 ; /etc/passwd: the serial line never gets a shell without a password.
-tty_up: lda ttypid
+tty_up: bit tty_on          ; bit 6: a modem is on the line (tty.s): no login
+        bvs @r
+        lda ttypid
         bne @r
         lda have_pw
         beq @r
