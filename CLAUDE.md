@@ -97,6 +97,8 @@ Two people work on this repo, each with their own Claude session. They share wha
 - One feature or fix per commit, with its tests. Message style: `feat: ...`, `fix: ...`, `test: ...`, `build: ...`, `docs: ...`,
   lower case, saying what changed for the user.
 - Work on a branch and open a pull request into the current release branch (`release-0.9`).
+- After a release, fast-forward `main` to the release branch (`git push origin origin/release-0.9:main`):
+  GitHub shows `main`'s README, so it is stale until then.
 
 ## Debugging
 
