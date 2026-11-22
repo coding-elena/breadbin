@@ -166,16 +166,16 @@ class Shell(unittest.TestCase):
         tab()
         self.v.type("\n")
         self.v.wait_for("/home/", after="$ echo /home/\n")
-        self.v.type("echo /home/h")
+        self.v.type("echo /home/user/h")
         tab()                                   # hello.bas, hello.s: "hello."
         tab()                                   # lists them
-        s = self.v.wait_for("$ echo /home/hello.", after="hello.bas")
+        s = self.v.wait_for("$ echo /home/user/hello.", after="hello.bas")
         listing = [l for l in s.splitlines() if "hello.bas" in l][-1]
         self.assertEqual(sorted(listing.split()), ["hello.bas", "hello.s"])
         self.v.type("s")
         tab()
         self.v.type("\n")
-        self.v.wait_for("$ echo /home/hello.s\n/home/hello.s")
+        self.v.wait_for("$ echo /home/user/hello.s\n/home/user/hello.s")
 
 class Restore(unittest.TestCase):
     """An NMI (RESTORE) kills a foreground program even with interrupts off."""
@@ -209,7 +209,7 @@ class Fsck(unittest.TestCase):
         orphan = fs.alloc_inode(mkimage.T_FILE)             # in no directory
         fs.write_file(orphan, b"lost data\n")
         leaked = fs.alloc_block()                           # marked used, owned by nothing
-        rd = fs.read_inode(fs.lookup("/home/readme"))
+        rd = fs.read_inode(fs.lookup("/home/user/readme"))
         fs.set_used(rd["direct"][0], False)                 # in use, marked free
         home = fs.lookup("/home")
         free_ino = fs.alloc_inode(mkimage.T_FILE)

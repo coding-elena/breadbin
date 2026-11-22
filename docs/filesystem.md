@@ -160,7 +160,7 @@ python3 tools/mkimage.py build data.d64 --boot build/breadbin.prg --root myfolde
 
 # look inside an image
 python3 tools/mkimage.py ls  build/breadbin.d64 /home
-python3 tools/mkimage.py cat build/breadbin.d64 /home/readme
+python3 tools/mkimage.py cat build/breadbin.d64 /home/user/readme
 ```
 
 ### Disks from Breadbin 0.4 and earlier
