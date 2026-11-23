@@ -142,7 +142,7 @@ Every system call is a `jsr` into the jump table at `$CF00`. Its addresses are s
 | `SYS_WRITE` | A = fd, r0 = buffer, r1 = length | r1 = count | writing to a pipe nobody reads raises `SIGPIPE` |
 | `SYS_PIPE` | | A = read fd, X = write fd | 256-byte kernel buffer; readers and writers block |
 | `SYS_ISATTY` | A = fd | carry clear if a terminal; X = which (0 the console, 1 the serial line) | |
-| `SYS_CONMODE` | A = 0 cooked, 1 raw | | raw: one key per read, no echo (see below) |
+| `SYS_CONMODE` | A = 0 cooked, 1 raw, 2 | | raw: one key per read, no echo (see below). 2: on the console raw with no blinking cursor (the program draws on the screen itself), on the serial line binary (see terminal.md) |
 | `SYS_STAT` | r0 = path, r1 = 16-byte buffer | | type, nlink, size (3 bytes), inode, device, major, mtime (4), ctime (4). Types `T_FILE`, `T_DIR`, `T_CHR`. Times as `SYS_CLOCK`'s; 0 = unknown (a normal C64 disk). 0.4 and earlier filled only 8 bytes |
 | `SYS_UTIME` | r0 = path | | sets its mtime and ctime to now (`touch`). Does nothing on a normal C64 disk |
 | `SYS_SEEK` | A = fd, r0 + r1 low byte = offset (24 bits), Y = `SEEK_SET` or `SEEK_END` | r0 + r1 low byte = the new position | `SEEK_SET` counts from the start, `SEEK_END` back from the end. `EINVAL` past either end, and on anything but a file on a Breadbin disk (a pipe, the console, a normal C64 disk) |

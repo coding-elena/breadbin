@@ -108,6 +108,8 @@ Lines are 79 characters at most. Echo needs room in the send ring; when there is
 
 **Raw** (`conmode` with stdin on the serial line): one key per read, no echo.
 
+**Binary** (`conmode` 2, for a terminal program such as `screenw`): `t_raw` = 2. The NMI queues every byte, CTRL-C and CTRL-Z too; a read skips `in_map` and returns all that is in the receive ring (up to 255 bytes; it waits for the first); a write puts the bytes in the send ring as they are, with no `out_byte` translation. Like raw mode it belongs to the process that set it.
+
 | Typed | Key |
 |---|---|
 | CR / LF | `K_RET` |

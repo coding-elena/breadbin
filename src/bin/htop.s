@@ -17,10 +17,11 @@
 ; share with an 8-bit divide (count*100/ticks) and starts again.
 ;
 ; Memory is shown like free: the bar is the pages in use, the numbers are
-; used/total KB (pages / 4). With an REU or GeoRAM, a third line shows how
-; full the /tmp RAM disk on it is (SYS_FSINFO; the swap area that shares
-; the expansion has no usage the kernel reports). The tasks line also has
-; the free/total pages and the time since boot.
+; used/total KB (pages / 4). With an REU or GeoRAM, a third line ("tmp")
+; shows how full the /tmp RAM disk on it is: used/total KB are /tmp's own
+; blocks (SYS_FSINFO), not the whole expansion (the swap area and drive 8
+; copy that share it have no usage the kernel reports). The tasks line also
+; has the used/total pages and the time since boot.
 ;
 ; vibed by Lenu
 ;
@@ -237,13 +238,13 @@ draw:   lda #<mi
         jsr out_ch
         jsr out_eol
 
-        ; reu / geo [bar] nnn% used/totalk: the /tmp RAM disk
+        ; tmp [bar] nnn% used/totalk: the /tmp RAM disk
         lda #2
         jsr out_goto
         jsr ram_line
         jsr out_eol
 
-        ; tasks n/max  pg free/total  up h:mm
+        ; tasks n/max  pg used/total  up h:mm
         lda #4
         jsr out_goto
         lda #<s_tasks
@@ -260,7 +261,9 @@ draw:   lda #<mi
         lda #<s_pgs
         ldx #>s_pgs
         jsr out_str
-        lda mi              ; free pages
+        lda mi+1            ; used pages = total - free
+        sec
+        sbc mi
         ldx #0
         jsr out_dec
         lda #'/'
@@ -382,24 +385,14 @@ draw:   lda #<mi
         sta idle
         rts
 
-; ram_line: with an REU or GeoRAM (meminfo type), "reu"/"geo" and how full
-; the /tmp RAM disk on it is: bar, percent, used/total KB. Nothing without.
+; ram_line: with an REU or GeoRAM (meminfo type), "tmp" and how full the
+; /tmp RAM disk on it is: bar, percent, used/total KB of /tmp. Nothing without.
 ram_line:
         lda mi+5
         bne @x
         rts                 ; no expansion: nothing
-@x:     ldx #<s_reu
-        ldy #>s_reu
-        lda mi+5
-        cmp #2
-        bne @l
-        ldx #<s_geo
-        ldy #>s_geo
-@l:     txa
-        pha
-        tya
-        tax
-        pla
+@x:     lda #<s_tmpl
+        ldx #>s_tmpl
         jsr out_str
         lda #<s_tmp         ; fsinfo("/tmp"): free, total blocks
         sta r0
@@ -433,16 +426,10 @@ ram_line:
         ror uk
         lsr uk+1
         ror uk
-
-        lda #0
-        sta tk
-
-        lda mi+2             ; banks * 64
-        lsr a
+        lsr tk+1            ; total: /tmp's own blocks, not the whole expansion
         ror tk
-        lsr a
+        lsr tk+1
         ror tk
-        sta tk+1
 
 @s:     lda tb+1            ; the same shift on both until total fits 8 bits
         beq @p
@@ -723,8 +710,7 @@ s_mem:   .byte "mem ", 0
 s_tasks: .byte "tasks ", 0
 s_pgs:   .byte "  pg ", 0
 s_up:    .byte "  up ", 0
-s_reu:   .byte "reu ", 0
-s_geo:   .byte "geo ", 0
+s_tmpl:  .byte "tmp ", 0
 s_tmp:   .byte "/tmp", 0
 s_hdr:   .byte "  pid ppid st  mem cpu% name", 0   ; rbar: reverse, padded
 s_idle:  .byte " idle", 0

@@ -255,11 +255,12 @@ con_escape:
 @rok:   clc
         jmp $fff0           ; PLOT
 
-; con_setmode: A = 0 cooked, 1 raw (conmode syscall)
+; con_setmode: A = 0 cooked, 1 raw, 2 raw without the blinking cursor
+; (for a program that draws on the screen itself) (conmode syscall)
 .export sys_conmode, con_release
 sys_conmode:
         jsr tty_cmhook      ; stdin on the serial line: its mode (tty.s)
-        and #1
+        and #3
         sta con_raw
         ldx cur
         lda p_pid,x
@@ -592,7 +593,8 @@ raw_read:
         jsr GETIN
         cmp #0
         bne @k
-        lda #1
+        lda con_raw         ; mode 2: the program draws its own cursor
+        and #1
         sta cur_on
         lda #CH_KEY
         jsr block_on

@@ -55,16 +55,17 @@ TXNEED    = 8           ; room one translated byte may need (ESC [ 2 5 ; 4 0 H)
 .segment "LOWDATA"
 tty_on:   .byte 0       ; bit 7: a card was found at boot, bit 6: a modem answered AT
 tty_st:   .byte 0       ; ACIA status, as the NMI hook read it
-tvec:     .word 0       ; tcall's target
 hold_cnt: .byte 0       ; jiffies left of a disk hold (0 = none)
 fg_tty:   .byte 0       ; the terminal sigint_fg / sigtstp_fg act on
-t_x:      .byte 0
 
 ; tty_of: X = process slot -> A = its terminal (0 console, 1 serial; Z set
 ; for 0): its stdin's, else its parent's, up to init (the console). Orphans
 ; get init as their parent (proc_exit), so the chain always ends. Keeps X
-; (on the stack: the NMI may call it while another call is running); uses Y.
-tty_of: txa
+; and Y (on the stack: the NMI may call it while another call is running);
+; returns with carry clear.
+tty_of: tya
+        pha
+        txa
         pha
 @up:    txa
         asl a
@@ -83,13 +84,15 @@ tty_of: txa
 @par:   lda p_pslot,x
         tax
         bpl @up             ; $ff: init's parent: the console
-@con:   pla
+@con:   clc                 ; 0
+        .byte $24           ; bit zp: skips the sec
+@ser:   sec                 ; 1
+        pla
         tax
+        pla
+        tay
         lda #0
-        rts
-@ser:   pla
-        tax
-        lda #1
+        rol a               ; A = the carry: 0 or 1, Z set for 0, carry clear
         rts
 
 ; tty_irqhook: from the IRQ, every jiffy
@@ -136,13 +139,7 @@ tty_nmihook:
 @rst:   ldx cur             ; RESTORE while a serial-line process runs: not
         cpx #$ff            ; that one: the console's job, at the next IRQ
         beq @r
-        tya
-        pha
-        jsr tty_of
-        tax
-        pla
-        tay
-        txa
+        jsr tty_of          ; keeps Y (the handler doesn't save it)
         beq @r
         lda #$7f            ; (CIA 2 NMIs off and acknowledged, as RESTORE does)
         sta $dd0d
@@ -173,18 +170,12 @@ tty_nmihook:
 tty_sigchk:
         lda p_state,x
         beq @r
-        tya
-        pha
-        jsr tty_of
+        jsr tty_of          ; keeps X and Y
         cmp fg_tty
         bne @no
-        pla
-        tay
         lda p_state,x
         rts
-@no:    pla
-        tay
-        lda #PS_FREE
+@no:    lda #PS_FREE
 @r:     rts
 
 ; tty_chrhook: in sys_open, after `lda ci+I_MAJOR` of a device (X = the
@@ -193,12 +184,14 @@ tty_sigchk:
 tty_chrhook:
         cmp #MAJ_CTTY
         bne @c1
-        stx t_x
+        txa                 ; the open-file entry, kept on the stack
+        pha
         ldx cur
         jsr tty_of
-        ldx t_x
-        cmp #0
-        bne @ser
+        lsr a               ; carry = the serial line (pla, tax keep it)
+        pla
+        tax
+        bcs @ser
         lda #MAJ_CON
         rts
 @c1:    cmp #MAJ_TTY
@@ -237,7 +230,7 @@ tty_cmhook:
         cmp #FT_TTY
         bne @no
         pla
-        and #1
+        and #3              ; 0 cooked, 1 raw, 2 binary (tty_mode)
         tay
         pla
         pla
@@ -255,20 +248,21 @@ tty_cmhook:
 
 ; tcall: A/X = a routine under the ROM, Y = its argument. Runs it with
 ; interrupts off and the ROM switched out. Returns its A (Z/N set from it);
-; X is lost, carry is the caller's.
+; X is lost, carry is the caller's. The target is written into the jsr
+; itself (this page is RAM); interrupts are off from before that write
+; until the call returns, and the NMI never comes here.
 tcall:  php
         sei
-        sta tvec
-        stx tvec+1
+        sta @js+1
+        stx @js+2
         lda #MAP_RAM
         sta $01
-        jsr @j
+@js:    jsr $ffff           ; patched above
         ldx #MAP_KERNAL
         stx $01
         plp
         ora #0
         rts
-@j:     jmp (tvec)
 
 ; tty_hold: from the serial bus code, before a step that is timed to the
 ; cycle. Keeps A, X, Y and carry.
@@ -433,7 +427,7 @@ tx_tail:  .res 1        ; written by the NMI
 lb_len:   .res 1
 lb_rpos:  .res 1
 lb_ready: .res 1
-t_raw:    .res 1        ; 1 = raw keys (conmode on the serial line)
+t_raw:    .res 1        ; 1 = raw keys, 2 = binary: no translation (conmode)
 t_rawpid: .res 1
 i_esc:    .res 1        ; input: 1 after ESC, 2 inside ESC [
 i_cr:     .res 1        ; input: the last byte was CR (drop a following LF)
@@ -458,6 +452,9 @@ tty_nmi:
         and #$08            ; a byte came in
         beq @tx
         lda ACIA_DATA
+        ldx t_raw
+        cpx #2
+        bcs @put            ; binary: every byte is data, CTRL-C too
         cmp #$03            ; CTRL-C: SIGINT, never queued
         bne @nc
         sta tf_int
@@ -579,7 +576,9 @@ hangup: ldx #MAXPROC-1
         sta o_esc
         rts
 
-; tty_mode: Y = 0 cooked, 1 raw (conmode with stdin on the serial line)
+; tty_mode: Y = 0 cooked, 1 raw, 2 binary (conmode with stdin on the serial
+; line). Binary passes every byte both ways as it is (CTRL-C too, no LF
+; to CR LF) and a read returns all that is waiting: for a terminal program
 tty_mode:
         sty t_raw
         ldx cur
@@ -633,6 +632,27 @@ tty_rw: lda sb4
 ; ---- reading ----
 tty_rd: lda t_raw
         beq @cooked
+        cmp #2
+        bcc @raw
+        ldy #0              ; binary: all that is waiting, up to r1 (255)
+@bl:    lda r1+1
+        bne @bg
+        cpy r1
+        bcs @bd
+@bg:    cpy #$ff
+        beq @bd
+        jsr rx_get          ; keeps Y
+        bcs @bd
+        sta (r0),y
+        iny
+        bne @bl
+@bd:    tya
+        beq @wait           ; nothing yet
+        sty r1
+        lda #0
+        sta r1+1
+        lda #1
+        rts
 @raw:   jsr rx_get
         bcs @wait
         jsr in_map
@@ -821,8 +841,13 @@ tty_wr: lda sb5
         bcc @full
         ldy #0
         lda (s0),y
+        ldx t_raw
+        cpx #2
+        bcs @bin            ; binary: the byte as it is
         jsr out_byte
-        inc s0
+        jmp @nx
+@bin:   jsr tx_put
+@nx:    inc s0
         bne @c
         inc s0+1
 @c:     lda s1

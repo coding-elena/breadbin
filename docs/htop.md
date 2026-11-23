@@ -7,8 +7,8 @@ process's share of the CPU, and redraws itself in place about every 2 seconds.
 ```
 cpu [████████████████] 100%
 mem [████............]  23%   7/31k
-reu [██..............]  12%   56/448k
-tasks 4/12  pg 96/125  up 1:23
+tmp [█...............]   6%  17/288k
+tasks 4/12  pg 29/125  up 1:23
 
   pid ppid st  mem cpu% name
     0                 0 idle
@@ -33,8 +33,8 @@ RUN/STOP also ends it, like any foreground program.
 |---|---|
 | `cpu` | share of the last round's ticks that went to a process (100 − idle) |
 | `mem` | the program pool, like `free`: the bar and percentage are the pages in use, the numbers used/total KB (pages / 4) (`SYS_MEMINFO`) |
-| `reu` / `geo` | only with an REU or GeoRAM: how full the `/tmp` RAM disk on it is, as a bar and percentage, then used/total KB (`SYS_FSINFO`). The swap area and the drive 8 copy that share the expansion aren't included: the kernel reports no usage for them. Without an expansion this line is empty. |
-| `tasks` | processes in use / the maximum (12); `pg` free / total pages of the program pool; `up` the time since boot, h:mm (`SYS_TIME`, the jiffy count divided by 60 three times; it wraps after about 77 hours) |
+| `tmp` | only with an REU or GeoRAM: how full the `/tmp` RAM disk on it is, as a bar and percentage, then used/total KB of `/tmp` itself (`SYS_FSINFO`; blocks / 4). The total is the size of `/tmp`, not of the whole expansion: the swap area and the drive 8 copy that share it aren't included, since the kernel reports no usage for them. The filesystem's own superblock, bitmap and inode table count as used, so an empty `/tmp` isn't at 0%. Without an expansion this line is empty. |
+| `tasks` | processes in use / the maximum (12); `pg` used / total pages of the program pool; `up` the time since boot, h:mm (`SYS_TIME`, the jiffy count divided by 60 three times; it wraps after about 77 hours) |
 | `pid 0 idle` | ticks in which no process was ready to run |
 | process rows | as `ps`: pid, parent, state (`r` ready, `s` sleeping, `z` zombie, `T` stopped), pages, then `cpu%` and name |
 
@@ -107,7 +107,7 @@ thousands), so used and total are shifted right together until the total fits
   `htop: needs the console` and exits 1.
 - **The bars use reverse video.** In a text dump of the screen (like the VICE
   tests make) the filled part looks blank.
-- **The REU line is only `/tmp`.** The swap area and the copy of drive 8 also
+- **The `tmp` line is only `/tmp`.** The swap area and the copy of drive 8 also
   live in the expansion, but the kernel has no call that reports their use.
 - **Fixed layout:** 40 columns, at most 12 process rows (the kernel's maximum).
   The process name shows up to 10 characters, and there is no user column,

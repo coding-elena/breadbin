@@ -77,6 +77,21 @@ Then start the C64 with the same options as before (`make run-tty`, or the `x64s
 
 At boot tcpser answers the `AT` with `OK`, so Breadbin marks the line as a modem line: **no `login:` is started** on `/dev/ttyS0`, and the line is left free for a program that talks to the modem. If tcpser isn't running (or you use socat), the line gets its login as before.
 
+## Calling out: screen
+
+`screen /dev/ttyS0` turns the C64 into an ANSI (VT100) terminal on the serial line, 40 x 25 in colour. With tcpser, dial a BBS or a telnet host with `atdt host:port`:
+
+```
+screen /dev/ttyS0
+atdtoasisbbs.hopto.org:6400
+```
+
+- **CTRL-A k** quits (the screen is cleared), **CTRL-A a** sends a CTRL-A. RETURN sends CR, DEL sends `$7F`, the cursor keys `ESC [ A`-`D`.
+- While it runs the line is in binary mode: every byte passes as it is, both ways, and what arrives is drawn straight into screen RAM by `screenw`, its second process.
+- Understood: cursor movement and positioning, erasing (`J`, `K`, `X`), inserting and deleting lines and characters, the scroll region, save and restore, colours 30-37 and 90-97 with bold as bright, reverse video, wrapping, and the replies to `ESC [ 6 n` (cursor position) and `ESC [ c`, which BBSes use to detect ANSI. Bytes `$80`-`$FF` are code page 437: box drawing and blocks become PETSCII graphics, accented letters plain ones.
+- Not on a C64 screen: background colours (one for the whole screen) and 80 columns (positions past column 40 stay on the last one). Most BBSes ask how wide the screen is: answer 40. A BBS that asks about linefeeds wants yes: a CR alone only returns to the start of the line.
+- It runs on the console only. On a modem line no `login` competes for the line; without a modem, `init`'s login on `/dev/ttyS0` reads the same bytes.
+
 ## On a real C64
 
 - **SwiftLink or Turbo232 with a null-modem cable** to a PC serial port. Use a terminal program (PuTTY, minicom, screen) set to 9600 baud, 8N1, RTS/CTS flow control, VT100/ANSI emulation.
@@ -140,7 +155,7 @@ Programs write the same bytes as on the console. The serial line translates them
 | | |
 |---|---|
 | `isatty(fd)` | carry clear for both terminals; **X** says which (0 console, 1 serial line) |
-| `conmode` | acts on the terminal of your standard input |
+| `conmode` | acts on the terminal of your standard input. Mode 2 on the serial line is binary (no translation either way, CTRL-C is data, a read returns all that is waiting); on the console it is raw without the blinking cursor |
 | `/dev/tty` | always the terminal you run on |
 | `/dev/ttyS0` | the serial line itself (`ENODEV` without the cartridge) |
 | `O_NONBLOCK` | opened with it, a read with nothing typed (cooked: no whole line yet) returns `EAGAIN` instead of waiting; serial line only |

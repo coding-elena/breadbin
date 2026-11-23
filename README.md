@@ -145,7 +145,7 @@ The boot disk is mounted at `/`. More drives work too: put a disk in drive 9, 10
 
 ## Commands
 
-`sh` `init` `login` `ls [-l] [-a]` `cat` `echo [-n] [-e]` `grep [-v] [-c]` `wc` `head [-n]` `tail [-n]` `sort [-r]` `tee [-a]` `more` `edit` `touch` `cp` `mv` `rm` `mkdir` `rmdir` `pwd` `stat` `hexdump` `ps` `htop` `kill [-sig]` `sleep` `free` `df` `mount` `umount` `format` `fsck [-f] [dir]` `sync` `uptime` `date [yyyy-mm-dd] [hh:mm[:ss]]` `uname [-a]` `version` `fastfetch` `whoami` `who` `passwd` `talk [user]` `mail [-a] [-c] [user]` `theme` `help` `clear` `count` `basic` `as` `chess` `tetris`
+`sh` `init` `login` `ls [-l] [-a]` `cat` `echo [-n] [-e]` `grep [-v] [-c]` `wc` `head [-n]` `tail [-n]` `sort [-r]` `tee [-a]` `more` `edit` `touch` `cp` `mv` `rm` `mkdir` `rmdir` `pwd` `stat` `hexdump` `ps` `htop` `kill [-sig]` `sleep` `free` `df` `mount` `umount` `format` `fsck [-f] [dir]` `sync` `uptime` `date [yyyy-mm-dd] [hh:mm[:ss]]` `uname [-a]` `version` `fastfetch` `whoami` `who` `passwd` `talk [user]` `mail [-a] [-c] [user]` `screen /dev/ttyS0` `theme` `help` `clear` `count` `basic` `as` `chess` `tetris`
 
 `echo -n` leaves out the final newline (each option is a separate argument: `echo -n -e`, not `-ne`). `echo -e` turns `\n` (newline), `\e` (ESC), `\b` (backspace), `\a` (bell: a beep), `\xHH` (a byte in hex, one or two digits) and `\\` (a backslash) into their bytes and prints any other backslash as typed; ESC starts the console sequences listed in [docs/terminal.md](docs/terminal.md), so `echo -e "\eRhi\er"` prints in reverse video. On the C64 keyboard the backslash is the £ key.
 

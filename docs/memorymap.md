@@ -1,6 +1,6 @@
 # Breadbin memory map
 
-Addresses from a build of `fa949b6` (`build/kernel.map`, `build/kernel.lbl`), with `src/kernel.cfg`, `src/kernel/k.inc` and [docs/programming.md](programming.md). Segment addresses move when the kernel changes; rebuild and check `build/kernel.map`.
+Addresses from a build of `d87485b` with the serial line's binary mode (`conmode` 2) and the smaller `tcall`/`tty_of` (`build/kernel.map`, `build/kernel.lbl`), with `src/kernel.cfg`, `src/kernel/k.inc` and [docs/programming.md](programming.md). Segment addresses move when the kernel changes; rebuild and check `build/kernel.map`.
 
 The kernel runs with `$01 = $36` (BASIC ROM out, KERNAL ROM and I/O in). Code under the ROM runs with `$01 = $35` (both ROMs out, I/O in) and interrupts off.
 
@@ -14,37 +14,38 @@ The kernel runs with `$01 = $36` (BASIC ROM out, KERNAL ROM and I/O in). Code un
 | `$0020`–`$0022` | 3 B | per process | `argv`, `argc` |
 | `$0023`–`$002F` | 13 B | per process | free for the program |
 | `$0030`–`$003F` | 16 B | per process | user library scratch; free if the program doesn't call the library |
-| `$0040`–`$008D` | 78 B | kernel | kernel zero page (`cur` `$72`, `in_kernel` `$73`, ...) |
-| `$008E`–`$00FF` | | KERNAL | KERNAL zero page |
+| `$0040`–`$008F` | 80 B | kernel | kernel zero page (`cur` `$74`, `in_kernel` `$75`, `restore_pending` `$8F`, ...) |
+| `$0090`–`$00FF` | | KERNAL | KERNAL zero page |
 | `$0100`–`$01FF` | 256 B | shared | one stack for all processes; up to 130 bytes of each are saved on a switch |
 | `$0200`–`$02A6` | | KERNAL | input buffer, KERNAL variables |
 | `$02A7`–`$02F8` | 82 B | ttyS0 | **LOWDATA**: serial-line variables and small hooks |
 | `$0300`–`$0333` | | KERNAL | vectors; Breadbin sets `$0314`/`$0316` (IRQ, BRK) and `$0318` (NMI) |
-| `$0334`–`$03EE` | 187 B | ttyS0 | **LOWCODE** (the cassette buffer): serial-line hooks |
+| `$0334`–`$03DF` | 172 B | ttyS0 | **LOWCODE** (the cassette buffer): serial-line hooks |
+| `$03E0`–`$03FF` | 32 B | | free (the rest of the cassette buffer) |
 | `$0400`–`$07E7` | 1000 B | console | screen (KERNAL screen editor) |
 | `$07FF`–`$0850` | | boot | load address and BASIC `SYS` stub of `breadbin.prg` |
 | `$0800`–`$84FF` | 125 pages | user pool | programs, in 256-byte pages (`mem.s`, from page `$08`) |
-| ↳ `$4809`–`$4E92` | 1.6 KB | boot only | **INIT** (`kmain`, `tty_boot`, `tty_init`, ...); runs where loaded, the pool gets the pages back after boot |
-| `$8500`–`$BF98` | 14.6 KB | kernel | **CODE** (`nmi_handler` `$B6D0`, `sched` `$B80B`, `irq` `$B945`); includes RAM under the BASIC ROM |
-| `$BF99`–`$C2B1` | 793 B | kernel | **RODATA** |
-| `$C2B2`–`$CEFE` | 3.1 KB | kernel | **BSS** (see below) |
-| `$CEFF` | 1 B | | free |
+| ↳ `$47BF`–`$4ED0` | 1.8 KB | boot only | **INIT** (`kmain`, `tty_boot`, `tty_init`, ...); runs where loaded, the pool gets the pages back after boot |
+| `$8500`–`$BF5A` | 14.6 KB | kernel | **CODE** (`nmi_handler` `$B692`, `sched` `$B7CD`, `irq` `$B907`); includes RAM under the BASIC ROM |
+| `$BF5B`–`$C273` | 793 B | kernel | **RODATA** |
+| `$C274`–`$CEC0` | 3.1 KB | kernel | **BSS** (see below) |
+| `$CEC1`–`$CEFF` | 63 B | | free |
 | `$CF00`–`$CFA7` | 168 B | kernel | **JUMPTAB**: the system call jump table, at a fixed address |
-| `$CFA8`–`$CFF8` | 81 B | ttyS0 | **JTCODE**: `tcall`, `tty_hold`, `tty_write`, `tty_read` |
-| `$CFF9`–`$CFFF` | 7 B | | free |
+| `$CFA8`–`$CFFB` | 84 B | ttyS0 | **JTCODE**: `tcall`, `tty_hold`, `tty_write`, `tty_read` |
+| `$CFFC`–`$CFFF` | 4 B | | free |
 | `$D000`–`$DFFF` | 4 KB | I/O | VIC, SID, colour RAM `$D800`, CIA1 `$DC00`, CIA2 `$DD00` |
 | ↳ `$DE00`–`$DE03` | | cartridge | 6551 ACIA (SwiftLink/Turbo232), or the GeoRAM window |
 | ↳ `$DF00` | | cartridge | REU registers; GeoRAM block register `$DFFF` |
 | `$E000`–`$FFFF` | 8 KB | KERNAL ROM | ROM switched in; the RAM underneath holds kernel data (see below) |
 
-### Kernel BSS (`$C2B2`–`$CEFE`)
+### Kernel BSS (`$C274`–`$CEC0`)
 
 | Address | Contents |
 |---|---|
-| `$C2B2`–`$C8B1` | `bufs`: block cache, 6 × 256 bytes |
-| `$C8B2`– | buffer state, inodes, open-file table (`f_type` `$CAAF`) |
-| `$CD36` | `pg_used`: user pool page map |
-| `$CDB8`– | process tables (`p_state` `$CDB8`, `p_fd` `$CE90`) |
+| `$C274`–`$C873` | `bufs`: block cache, 6 × 256 bytes |
+| `$C874`– | buffer state, inodes, open-file table (`f_type` `$CA71`) |
+| `$CCF8` | `pg_used`: user pool page map |
+| `$CD7A`– | process tables (`p_state` `$CD7A`, `p_fd` `$CE52`) |
 
 ## RAM under the KERNAL ROM (`$E000`–`$FFFF`)
 
@@ -57,10 +58,10 @@ Reachable only with `$01 = $35` and interrupts off.
 | `$EB40`–`$EBC3` | 132 B | `P_NAME`: process names (12 × 11 B) |
 | `$EBC4`–`$EBFF` | 60 B | free |
 | `$EC00`–`$EE20` | 545 B | **HICODE**: swap code (`swap.s`) |
-| `$EE21`–`$F240` | 1056 B | **HICODE**: ttyS0 driver, line discipline, ANSI translation |
-| `$F241`–`$F2D5` | 149 B | **HIBSS**: swap state |
-| `$F2D6`–`$F438` | 355 B | **TTYBSS**: serial rings, line buffer, line state |
-| `$F439`–`$FEFF` | ~2.7 KB | free (end of the HI region in `kernel.cfg`) |
+| `$EE21`–`$F288` | 1128 B | **HICODE**: ttyS0 driver, line discipline, ANSI translation |
+| `$F289`–`$F31D` | 149 B | **HIBSS**: swap state |
+| `$F31E`–`$F480` | 355 B | **TTYBSS**: serial rings, line buffer, line state |
+| `$F481`–`$FEFF` | ~2.6 KB | free (end of the HI region in `kernel.cfg`) |
 | `$FF00`–`$FFF9` | | not used |
 | `$FFFA`–`$FFFF` | | NMI (`$FFFA`) and IRQ (`$FFFE`) vectors for when the ROM is out (set in `main.s`) |
 
@@ -68,12 +69,12 @@ Reachable only with `$01 = $35` and interrupts off.
 
 | Segment | Range | Used / available | Symbols |
 |---|---|---|---|
-| LOWDATA | `$02A7`–`$02F8` | 82 / 89 B | `tty_on` `$02A7`, `tty_st` `$02A8`, `tvec` `$02A9`, `hold_cnt` `$02AB`, `fg_tty` `$02AC`, `t_x` `$02AD`, `tty_of` `$02AE`, `tty_irqhook` `$02D8`, `tty_athook` `$02E5`, `tty_rdhook` `$02EF` |
-| LOWCODE | `$0334`–`$03EE` | 187 / 204 B | `tty_nmihook` `$0334`, `tty_sigchk` `$0379`, `tty_chrhook` `$0393`, `tty_wrhook` `$03C5`, `tty_cmhook` `$03CF` |
-| INIT | `$4E26`–`$4E92` | 109 B | `tty_boot` `$4E26`, `tty_init` `$4E3D` |
-| JTCODE | `$CFA8`–`$CFF8` | 81 / 88 B | `tcall` `$CFA8`, `tty_hold` `$CFC2`, `tty_write` `$CFD4`, `tty_read` `$CFD7` |
-| HICODE | `$EE21`–`$F240` | 1056 B | `tty_nmi` `$EE21`, `tty_tick` `$EEA6`, `hangup` `$EF00`, `tty_mode` `$EF3E`, `raw_alive` `$EF58`, `tty_rw` `$EF79`, `tty_rd` `$EF9E`, `rx_get` `$F06F`, `in_map` `$F087`, `tty_wr` `$F0EF`, `tx_room` `$F12E`, `out_byte` `$F13A`, `put_dec1` `$F1E0`, `put_str` `$F1FD`, `tx_put` `$F209`, `strs` `$F21D`–`$F238`, `esc_in`/`esc_out` `$F239`–`$F240` |
-| TTYBSS | `$F2D6`–`$F438` | 355 B | `rx_buf` `$F2D6` (128), `tx_buf` `$F356` (128), `lbuf` `$F3D6` (80), `rx_head`/`rx_tail`/`tx_head`/`tx_tail` `$F426`–`$F429`, `lb_len`/`lb_rpos`/`lb_ready` `$F42A`–`$F42C`, `t_raw` `$F42D`, `t_rawpid` `$F42E`, `i_esc` `$F42F`, `i_cr` `$F430`, `o_esc` `$F431`, `o_row` `$F432`, `t_dcd` `$F433`, `tf_wake`/`tf_int`/`tf_stp`/`tf_hup` `$F434`–`$F437`, `t_px` `$F438` |
+| LOWDATA | `$02A7`–`$02F8` | 82 / 89 B | `tty_on` `$02A7`, `tty_st` `$02A8`, `hold_cnt` `$02A9`, `fg_tty` `$02AA`, `tty_of` `$02AB`, `tty_irqhook` `$02D8`, `tty_athook` `$02E5`, `tty_rdhook` `$02EF` |
+| LOWCODE | `$0334`–`$03DF` | 172 / 204 B | `tty_nmihook` `$0334`, `tty_sigchk` `$0373`, `tty_chrhook` `$0387`, `tty_wrhook` `$03B6`, `tty_cmhook` `$03C0` |
+| INIT | `$4E15`–`$4ED0` | 188 B | `tty_boot` `$4E15`, `tty_init` `$4E2C`, `modem_probe` |
+| JTCODE | `$CFA8`–`$CFFB` | 84 / 88 B | `tcall` `$CFA8`, `tty_hold` `$CFBF`, `tty_write` `$CFD1`, `tty_read` `$CFD4` |
+| HICODE | `$EE21`–`$F288` | 1128 B | `tty_nmi` `$EE21`, `tty_tick` `$EEAD`, `hangup` `$EF07`, `tty_mode` `$EF45`, `raw_alive` `$EF5F`, `tty_rw` `$EF80`, `tty_rd` `$EFA5`, `rx_get` `$F0AA`, `in_map` `$F0C2`, `tty_wr` `$F12A`, `tx_room` `$F176`, `out_byte` `$F182`, `put_dec1` `$F228`, `put_str` `$F245`, `tx_put` `$F251`, `strs` `$F265`–`$F280`, `esc_in`/`esc_out` `$F281`–`$F288` |
+| TTYBSS | `$F31E`–`$F480` | 355 B | `rx_buf` `$F31E` (128), `tx_buf` `$F39E` (128), `lbuf` `$F41E` (80), `rx_head`/`rx_tail`/`tx_head`/`tx_tail` `$F46E`–`$F471`, `lb_len`/`lb_rpos`/`lb_ready` `$F472`–`$F474`, `t_raw` `$F475` (2 = binary), `t_rawpid` `$F476`, `i_esc` `$F477`, `i_cr` `$F478`, `o_esc` `$F479`, `o_row` `$F47A`, `t_dcd` `$F47B`, `tf_wake`/`tf_int`/`tf_stp`/`tf_hup` `$F47C`–`$F47F`, `t_px` `$F480` |
 | I/O | `$DE00`–`$DE03` | | ACIA data, status, command, control |
 
 In kernel RAM the driver has only its 3-byte `jsr` hooks: `main.s` (`nmi_handler`), `proc.s` (IRQ, `sigint_fg` loop), `file.s` (open, `isatty`, read, write), `con.s` (`sys_conmode`), and `tty_hold` calls in `iec.s` and `blk.s`.
@@ -88,6 +89,6 @@ In kernel RAM the driver has only its 3-byte `jsr` hooks: `main.s` (`nmi_handler
 
 ## Room left
 
-- Under the ROM: `$F439`–`$FEFF` (~2.7 KB) and `$EBC4`–`$EBFF` (60 B).
-- Kernel RAM: 1 byte at `$CEFF` and 7 at `$CFF9`–`$CFFF`.
-- LOWDATA: 7 B; LOWCODE: 17 B.
+- Under the ROM: `$F481`–`$FEFF` (~2.6 KB) and `$EBC4`–`$EBFF` (60 B).
+- Kernel RAM: 63 bytes at `$CEC1`–`$CEFF` and 4 at `$CFFC`–`$CFFF`.
+- LOWDATA: 7 B (`$02F9`–`$02FF`); LOWCODE: 32 B (`$03E0`–`$03FF`).

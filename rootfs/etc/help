@@ -6,7 +6,7 @@ system: ps htop kill jobs fg bg free df
         uptime date uname version
         sleep clear theme fastfetch
 users:  login whoami passwd who
-        talk mail
+        talk mail screen
 code:   basic as
 games:  chess tetris
 disks:  mount umount format fsck sync
