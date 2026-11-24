@@ -10,7 +10,7 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
-from vicetest import Vice, scratch_file  # noqa: E402
+from vicetest import Vice, free_port, scratch_file  # noqa: E402
 import mkimage  # noqa: E402
 
 IMAGE = os.path.join(ROOT, "build", "breadbin-test.d64")
@@ -666,9 +666,13 @@ class InodeAlloc(unittest.TestCase):
 
 class SerialPeer:
     """The far end of the C64's serial line (a SwiftLink in VICE): VICE
-    connects to this TCP server when Breadbin turns DTR on."""
+    connects to this TCP server when Breadbin turns DTR on.
 
-    def __init__(self):
+    `answers` maps bytes the C64 sends to the reply, sent at once (the boot
+    probe waits only ~0.4 s of C64 time, a few ms in warp mode): e.g.
+    {b"AT\\r": b"OK\\r\\n"} plays a modem, {b"\\x1b[5n": b"\\x1b[0n"} an ANSI terminal."""
+
+    def __init__(self, answers=None):
         self.srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.srv.bind(("127.0.0.1", 0))
@@ -677,6 +681,8 @@ class SerialPeer:
         self.conn = None
         self.buf = b""
         self.lock = threading.Lock()
+        self.answers = answers or {}
+        self.pending = b""
 
     def vice_args(self):
         return ["-acia1", "-acia1base", "0xde00", "-acia1irq", "1", "-acia1mode", "1",
@@ -697,6 +703,11 @@ class SerialPeer:
                 return
             with self.lock:
                 self.buf += d
+            self.pending += d
+            for ask, reply in self.answers.items():
+                if ask in self.pending:
+                    self.conn.sendall(reply)
+                    self.pending = b""
 
     def text(self):
         with self.lock:
@@ -729,6 +740,139 @@ class SerialPeer:
                     s.close()
             except OSError:
                 pass
+
+
+class SerialNoPeer(unittest.TestCase):
+    """A SwiftLink whose line goes nowhere (VICE with nothing listening on
+    its TCP port): the modem probe must give up, not hang the boot."""
+
+    def test_boots_without_a_listener(self):
+        port = free_port()          # nothing listens here
+        # VICE then opens "127.0.0.1:<port>" as a file in the current directory
+        self.addCleanup(lambda: os.path.exists("127.0.0.1:%d" % port) and os.remove("127.0.0.1:%d" % port))
+        args = ["-acia1", "-acia1base", "0xde00", "-acia1irq", "1", "-acia1mode", "1",
+                "-myaciadev", "0", "-rsdev1", "127.0.0.1:%d" % port, "-rsdev1baud", "9600"]
+        with Vice(copy_image("nopeer"), reu=True, extra=args) as v:
+            v.wait_shell()
+            self.assertEqual(v.mem(0x02a7, 0x02a7)[0], 0x80)   # tty_on: a card, no modem
+            self.assertEqual(v.run("echo ok"), "ok")
+
+
+class LineProbe(unittest.TestCase):
+    """The boot asks what is on the line (modem_probe in tty.s): ESC [ 5 n
+    for an ANSI terminal, then AT for a Hayes modem. The peers here answer
+    at once; real tcpser answers too slowly for warp mode (it is detected
+    at normal speed)."""
+
+    def boot(self, name, answers):
+        peer = SerialPeer(answers)
+        self.addCleanup(peer.close)
+        v = Vice(copy_image(name), reu=True, extra=peer.vice_args())
+        self.addCleanup(v.close)
+        peer.accept()
+        v.wait_shell()
+        time.sleep(3)
+        return v, peer
+
+    def test_a_modem_is_found(self):
+        # tcpser echoes in command mode: the echo of ESC [ 5 n isn't ESC [ 0 n
+        v, peer = self.boot("modem", {b"\x1b[5n": b"\x1b[5n", b"AT\r": b"AT\r\r\nOK\r\n"})
+        self.assertEqual(v.mem(0x02a7, 0x02a7)[0], 0xc0)   # card and modem
+        self.assertNotIn("login:", peer.text())             # no login on a modem line
+
+    def test_an_ansi_terminal_is_found(self):
+        v, peer = self.boot("ansiterm", {b"\x1b[5n": b"\x1b[0n"})
+        self.assertEqual(v.mem(0x02a7, 0x02a7)[0], 0xa0)   # card and ANSI terminal
+        self.assertNotIn("AT", peer.text())                 # AT never reaches its screen
+        peer.wait_for("login:")
+
+    def test_a_silent_listener_gets_a_plain_card(self):
+        v, peer = self.boot("silent", {})
+        self.assertEqual(v.mem(0x02a7, 0x02a7)[0], 0x80)
+        self.assertIn("\x1b[5n", peer.text())
+        self.assertIn("AT\r", peer.text())
+        peer.wait_for("login:")
+
+
+class ScreenKeys(unittest.TestCase):
+    """screen sends the C64's keys as an ANSI terminal would (the table at
+    the top of screen.s): DEL is BS ($08), the Hayes backspace."""
+
+    def test_keys_on_the_line(self):
+        peer = SerialPeer()
+        self.addCleanup(peer.close)
+        v = Vice(copy_image("screenkeys"), reu=True, extra=peer.vice_args())
+        self.addCleanup(v.close)
+        peer.accept()
+        v.wait_shell()
+        v.type("screen /dev/ttyS0\n")
+        v.wait_for("Ctrl-A k")
+        time.sleep(1)
+        m = peer.mark()
+        # a b, INST/DEL, CRSR up down right left, RETURN (PETSCII)
+        v._cmd("keybuf ab\\x14\\x91\\x11\\x1d\\x9d\\x0d")
+        v._cmd("x", wait=0.25)
+        end = peer.wait_for("\r", since=m)
+        self.assertEqual(peer.text()[m:end], "ab\x08\x1b[A\x1b[B\x1b[C\x1b[D\r")
+
+
+class ScreenWithLogin(unittest.TestCase):
+    """screen on a line where init's login also reads (a terminal, not a
+    modem): while screenw holds the line in binary mode the login waits,
+    so what comes in reaches screen; after screen quits the login works."""
+
+    def test_screen_owns_the_line(self):
+        peer = SerialPeer()
+        self.addCleanup(peer.close)
+        v = Vice(copy_image("scrlogin"), reu=True, extra=peer.vice_args())
+        self.addCleanup(v.close)
+        peer.accept()
+        peer.wait_for("login:")
+        v.wait_shell()
+        v.type("screen /dev/ttyS0\n")
+        v.wait_for("Ctrl-A k")
+        time.sleep(1)
+        m = peer.mark()
+        peer.send("hello\r")
+        v.wait_for("hello", after="Ctrl-A k")
+        time.sleep(2)
+        self.assertNotIn("login:", peer.text()[m:])   # the login read nothing
+        v._cmd("keybuf \\x13k")                       # HOME (CTRL-A), k: quit
+        v._cmd("x", wait=0.25)
+        v.wait_for("[screen is terminating]")
+        self.assertNotIn("+++", peer.text()[m:])      # no hangup on a terminal
+        self.assertIn("login", v.run("ps"))
+        m = peer.mark()
+        peer.send("\r")
+        peer.wait_for("login:", since=m)
+        peer.send("user\r")
+        peer.wait_for("$ ", since=m)
+        peer.send("echo works\r")
+        peer.wait_for("works", since=m)
+
+
+class ScreenHangup(unittest.TestCase):
+    """Leaving screen on a modem line hangs up: +++ between two guard
+    times, then ATH. (Real tcpser needs the guard times in real seconds,
+    so it is checked at normal speed by hand, not here in warp mode.)"""
+
+    def test_hangup_on_quit(self):
+        peer = SerialPeer({b"AT\r": b"OK\r\n"})
+        self.addCleanup(peer.close)
+        v = Vice(copy_image("scrhang"), reu=True, extra=peer.vice_args())
+        self.addCleanup(v.close)
+        peer.accept()
+        v.wait_shell()
+        self.assertEqual(v.mem(0x02a7, 0x02a7)[0], 0xc0)   # a modem line
+        v.type("screen /dev/ttyS0\n")
+        v.wait_for("Ctrl-A k")
+        time.sleep(1)
+        m = peer.mark()
+        v._cmd("keybuf \\x13k")                       # HOME (CTRL-A), k: quit
+        v._cmd("x", wait=0.25)
+        end = peer.wait_for("ATH\r", since=m)
+        self.assertEqual(peer.text()[m:end], "+++ATH\r")
+        v.wait_for("[screen is terminating]")
 
 
 class Talk(unittest.TestCase):

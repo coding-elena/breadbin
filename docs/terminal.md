@@ -28,12 +28,12 @@ If Breadbin is using GeoRAM, it shows `serial: off (georam is at $de00)`. With n
 
 ### Modems
 
-At boot, after finding the card, Breadbin sends `AT` and waits about 0.4 s for `OK`. If a Hayes-style modem answers (tcpser, a WiFi modem), the line is marked as a **modem line**:
+At boot, after finding the card, Breadbin raises DTR and checks DSR: if nothing is at the far end (in VICE: nothing listening on the TCP port), it sends nothing and goes on booting. Otherwise it asks the terminal for its status (`ESC [ 5 n`); an ANSI terminal (xterm, Windows Terminal, PuTTY, also behind socat) answers, and Breadbin stops there. If nothing answers, it sends `AT` and waits about 0.4 s for `OK`. If a Hayes-style modem answers (tcpser, a WiFi modem), the line is marked as a **modem line**:
 - no `login` is started on `/dev/ttyS0`;
 - the line itself still works, so a program can open `/dev/ttyS0` and talk to the modem (dial, answer);
 - this is checked only at boot: switch the modem on before the C64.
 
-A card with a plain terminal or nothing attached doesn't answer, so it gets a login as before. The check raises DTR for a moment (in VICE this connects the TCP line, as the boot does anyway).
+A terminal, or a card with nothing attached, gets a login as before; a terminal never sees the `AT`. The check raises DTR for a moment (in VICE this connects the TCP line, as the boot does anyway).
 
 ## Trying it in VICE
 
@@ -86,11 +86,24 @@ screen /dev/ttyS0
 atdtoasisbbs.hopto.org:6400
 ```
 
-- **CTRL-A k** quits (the screen is cleared), **CTRL-A a** sends a CTRL-A. RETURN sends CR, DEL sends `$7F`, the cursor keys `ESC [ A`-`D`.
+- **CTRL-A k** quits (the screen is cleared), **CTRL-A a** sends a CTRL-A. On a modem line it hangs up first: a second of silence, `+++`, another second, then `ATH` (the Hayes escape and hang-up; tcpser closes the call). That takes about 2.5 s; without a call the modem just answers `OK`. On a terminal line nothing is sent.
+- The C64's keys become what an ANSI terminal sends:
+
+  | C64 key | Sent |
+  |---|---|
+  | RETURN | CR (`$0D`) |
+  | INST/DEL | BS (`$08`): the Hayes backspace (tcpser's `S5`), so `atdt` lines can be corrected; most BBSes take it too |
+  | cursor keys | `ESC [ A` / `B` / `C` / `D` |
+  | CLR/HOME | nothing: it is the same key code as CTRL-A, the prefix |
+  | SHIFT CLR/HOME | form feed (`$0C`, CTRL-L) |
+  | CTRL-letters | `$01`-`$1A`, except CTRL-A (the prefix), CTRL-B/F/N/P (the cursor keys' codes) and CTRL-J (RETURN's code: sends CR) |
+  | F1-F8 | nothing |
+
+  A host that wants DEL (`$7F`) to erase, such as a Linux shell with `stty erase ^?`, sees BS instead: use `stty erase ^H` there (bash's line editor takes both).
 - While it runs the line is in binary mode: every byte passes as it is, both ways, and what arrives is drawn straight into screen RAM by `screenw`, its second process.
 - Understood: cursor movement and positioning, erasing (`J`, `K`, `X`), inserting and deleting lines and characters, the scroll region, save and restore, colours 30-37 and 90-97 with bold as bright, reverse video, wrapping, and the replies to `ESC [ 6 n` (cursor position) and `ESC [ c`, which BBSes use to detect ANSI. Bytes `$80`-`$FF` are code page 437: box drawing and blocks become PETSCII graphics, accented letters plain ones.
 - Not on a C64 screen: background colours (one for the whole screen) and 80 columns (positions past column 40 stay on the last one). Most BBSes ask how wide the screen is: answer 40. A BBS that asks about linefeeds wants yes: a CR alone only returns to the start of the line.
-- It runs on the console only. On a modem line no `login` competes for the line; without a modem, `init`'s login on `/dev/ttyS0` reads the same bytes.
+- It runs on the console only. On a modem line no `login` runs there. Without a modem, `init`'s login on `/dev/ttyS0` waits while `screen` runs (the line is `screen`'s alone in binary mode) and answers again after CTRL-A k.
 
 ## On a real C64
 

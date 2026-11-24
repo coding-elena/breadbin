@@ -108,7 +108,7 @@ Lines are 79 characters at most. Echo needs room in the send ring; when there is
 
 **Raw** (`conmode` with stdin on the serial line): one key per read, no echo.
 
-**Binary** (`conmode` 2, for a terminal program such as `screenw`): `t_raw` = 2. The NMI queues every byte, CTRL-C and CTRL-Z too; a read skips `in_map` and returns all that is in the receive ring (up to 255 bytes; it waits for the first); a write puts the bytes in the send ring as they are, with no `out_byte` translation. Like raw mode it belongs to the process that set it.
+**Binary** (`conmode` 2, for a terminal program such as `screenw`): `t_raw` = 2. The NMI queues every byte, CTRL-C and CTRL-Z too; a read skips `in_map` and returns all that is in the receive ring (up to 255 bytes; it waits for the first); a write puts the bytes in the send ring as they are, with no `out_byte` translation. Like raw mode it belongs to the process that set it, and while it is set only that process reads the line: `tty_rd` makes any other reader wait as if nothing had come. So `screen` on a line with a login (a terminal, not a modem) gets everything that comes in, and the login, which would otherwise take bytes from the same ring one read at a time and answer each with a new `login:`, sleeps until `screenw` has gone and the line is cooked again (`raw_alive`). Bytes that came while `screen` ran are not replayed to it.
 
 | Typed | Key |
 |---|---|
@@ -153,16 +153,29 @@ Plain RAM, or nothing at all, can't do both.
 
 DTR stays off until the card is confirmed, because VICE opens and closes its TCP line with DTR. Then `modem_probe` raises it (the 6551 doesn't receive with DTR off) for the modem probe below, and the final command write leaves it on.
 
-### Finding a modem
+### Finding a modem or a terminal
 
-Right after the card is confirmed, `tty_init` calls `modem_probe` (INIT segment, polled, receive IRQ off):
-1. raises DTR (command `$0B`) and drops a stale byte;
-2. sends `AT` CR, waiting for TDRE before each byte;
-3. polls RDRF for about 0.4 s (128 x 256 polls at 1 MHz) for an `O` followed by a `K`. This matches a bare `OK` and an echoed `AT` before it.
+Right after the card is confirmed, `tty_init` calls `modem_probe` (INIT segment, polled, receive IRQ off). It asks three questions in turn:
+1. **Is anything there?** It raises DTR (command `$0B`) and waits up to ~50 ms (16 x 256 polls) for DSR (status bit 6 clear). With nothing at the far end DSR stays off (VICE with no listener on its TCP port keeps it off; with a listener it is on), so the probe returns `$80` (plain card) without sending anything.
+2. **An ANSI terminal?** It drops a stale byte, sends `ESC [ 5 n` (VT100 device status report) and polls about 0.4 s for `0` followed by `n`, the end of the answer `ESC [ 0 n`. xterm, Windows Terminal and PuTTY answer it (behind socat too: socat passes it on to the terminal it runs in). Then it returns `$A0`, and `AT` is never sent, so it doesn't appear on the terminal's screen.
+3. **A Hayes modem?** It sends CR `AT` CR and polls about 0.4 s for `O` followed by `K` (a bare `OK`, or one after the echoed `AT`). The first CR ends the line a modem got from step 2: tcpser echoes `ESC [ 5 n` (not `0n`, so step 2 doesn't take it for a terminal), and the CR makes it answer that line with `ERROR` (no `O` followed by `K`) before the `AT`. Then it returns `$C0`.
 
-It returns `$C0` (modem) or `$80` (plain card), and `tty_init` stores that in `tty_on`: **bit 7** is "a card was found", **bit 6** is "a Hayes-style modem (tcpser, a WiFi modem) answered". All the driver's tests are `bit tty_on` / `bpl` / `bmi`, so bit 6 changes nothing for the driver: the line works as before, and other programs can use it (for example to dial). The probe runs before `tty_on` bit 7 is set, so the NMI and IRQ hooks are still inert while it polls.
+Every wait is bounded: each byte sent gets ~50 ms for TDRE (if the 6551 never takes a byte the probe returns `$80` instead of hanging the boot), and each reply window counts its polls whether or not bytes come, so a line that keeps sending can't hold up the boot either. ENQ (`$05`) was tried as the terminal question and dropped: most terminals have an empty answerback (xterm, Windows Terminal), and socat answers nothing itself.
 
-The probe runs once, at boot. A modem attached later isn't detected, and a plain card with nothing on it costs 0.4 s of boot time. Its one scratch byte (`mp_b`, the previous byte read) is inside the INIT code, so it takes no resident RAM; INIT grows by about 50 bytes, which the pool gets back after boot.
+What the probe sees on each kind of line:
+
+| Line | DSR (status bit 6) | `ESC [ 5 n` sent | `AT` sent | `tty_on` | Login on `/dev/ttyS0` |
+|---|---|---|---|---|---|
+| Nothing listening (VICE, no TCP listener) | 1, off | no | no | `$80` | yes |
+| Silent listener (socat in a pipe, no terminal) | 0, on | yes | yes | `$80` | yes |
+| ANSI terminal (socat in a terminal, PuTTY) | 0, on | yes | no | `$A0` | yes |
+| Modem answering `OK` (tcpser) | 0, on | yes | yes | `$C0` | no |
+
+Checked in VICE with `tests.test_features.SerialNoPeer` and `LineProbe` (peers that answer at once), and by hand at normal speed: socat running in a terminal gave `$A0`, with only `breadbin login:` on its screen; tcpser (`-v`, raw TCP as in [terminal.md](terminal.md)) gave `$C0`. In the tests' warp mode tcpser answers too late for the 0.4 s window and the line gets `$80`. DCD (status bit 5) can't tell the lines apart: VICE shows it on both with and without a listener.
+
+`tty_init` stores the result in `tty_on`: **bit 7** is "a card was found", **bit 6** is "a Hayes-style modem (tcpser, a WiFi modem) answered", **bit 5** is "an ANSI terminal answered". All the driver's tests are `bit tty_on` / `bpl` / `bmi` (bits 7 and 6), so bit 5 changes nothing for the driver, and bit 6 only stops the login: the line works as before, and other programs can use it (for example to dial). The probe runs before `tty_on` bit 7 is set, so the NMI and IRQ hooks are still inert while it polls.
+
+The probe runs once, at boot. A modem or terminal attached later isn't detected. Boot time: about 50 ms with nothing on the line, up to 0.4 s for a terminal, 0.8 s for a modem or a silent listener. Its scratch bytes (`mp_b`, `mp_c`, `mp_1`, `mp_2`) are inside the INIT code, so they take no resident RAM; INIT grows by about 160 bytes, which the pool gets back after boot.
 
 `CTL_SPEED = $1C` is 9600 baud on a SwiftLink (double-speed crystal).
 
@@ -174,7 +187,7 @@ The probe runs once, at boot. A modem attached later isn't detected, and a plain
 
 ## Not done / not verified
 
-- The modem probe is written but not run: not tested against tcpser or a real modem, and the 0.4 s window may be short for a slow one.
+- The line probe is tested against tcpser and a terminal behind socat in VICE, not against a real modem or a real serial cable, and the 0.4 s windows may be short for a slow one. A modem that keeps DSR off isn't detected, and neither is tcpser when VICE uses its IP232 protocol (`-rsdev1ip232`): VICE then keeps DSR off.
 - DCD-based hangup is written but not tested: VICE may not drop DCD when the TCP peer goes away.
 - Open ROMs (MEGA65): not checked whether they leave `$02A7-$02FF` and the cassette buffer alone.
 - Multi-user safety: c64fs has no owners or permissions.

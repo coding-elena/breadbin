@@ -5,6 +5,37 @@
 ;
 ; Keys: CTRL-A k quits, CTRL-A a sends a CTRL-A.
 ;
+; Keys: C64 -> ANSI. The console in raw mode gives Breadbin's own key
+; codes (include/breadbin.inc), already ASCII, not PETSCII. Several of
+; them are the same byte as a CTRL letter, so a C64 key and a control key
+; can't be told apart here:
+;
+;   C64 key          raw code        sent on the line
+;   RETURN           K_RET   $0a LF  $0d CR (what a terminal sends; a modem
+;                                    or a BBS ends a line on CR)
+;   INST/DEL         K_DEL   $08     $08 BS, as sent: the Hayes backspace
+;                    (= CTRL-H)      (tcpser's S5 register, 8 by default)
+;                                    and what most BBSes expect. Not $7f
+;                                    (ASCII DEL, PuTTY's and xterm's key):
+;                                    tcpser's command mode takes $7f as a
+;                                    character, so "atdt" lines couldn't be
+;                                    corrected. Breadbin's own serial login
+;                                    erases on both.
+;   CRSR up/down     K_UP $10, K_DOWN $0e   ESC [ A / ESC [ B (VT100 cursor
+;   CRSR right/left  K_RIGHT $06, K_LEFT $02   keys: ESC [ C / ESC [ D)
+;                    (= CTRL-P, CTRL-N, CTRL-F, CTRL-B: those four can't
+;                    be sent as themselves)
+;   CLR/HOME         K_HOME  $01     the CTRL-A prefix (= CTRL-A). HOME has
+;                    (= CTRL-A)      no ANSI key here; CTRL-A a sends $01
+;   SHIFT CLR        K_CLR   $0c     $0c, as sent (= CTRL-L, form feed)
+;   CTRL-I           K_TAB   $09     $09 TAB, as sent
+;   other CTRL keys  $01-$1a         as sent (CTRL-J is RETURN's code: CR)
+;   letters, digits  ASCII $20-$7e   as sent (the console has done the
+;                                    PETSCII -> ASCII translation)
+;   F1-F8            $85-$8c         dropped: no VT100 code is sent
+;   RUN/STOP         (no code)       the kernel's SIGINT: ends screen
+;                                    without ending screenw (use CTRL-A k)
+;
 ; A console read blocks and only the serial line has O_NONBLOCK, so one
 ; process can't wait for both ends. It is two processes, like talk/talkw:
 ;
@@ -21,6 +52,14 @@
 ; which is on the serial terminal: it notices that screen has gone at the
 ; next byte that arrives, and ends then. Use CTRL-A k.
 ;
+; Leaving (CTRL-A k) on a modem line hangs the call up first, while
+; screenw still draws the modem's answers: the Hayes escape, GUARD jiffies
+; of silence, +++, GUARD jiffies of silence (the guard time: S12 = 50,
+; 1 s, on tcpser and most modems), then ATH CR. Without a call the modem is
+; in command mode already: it ignores the +++ and answers ATH with OK. DTR
+; is not dropped for it: VICE's TCP line (without IP232) doesn't pass DTR
+; on, and many modems ignore DTR anyway (AT&D0).
+;
 ; Note: init's login on /dev/ttyS0 reads the same receive ring (not on a
 ; modem line: there init starts no login).
 ;
@@ -28,6 +67,11 @@
 
 .include "../../include/breadbin.inc"
 .import print, eprint, argn, perr
+
+; tty_on lives in the kernel's LOWDATA ($02A7, first variable of tty.s):
+; bit 6 set = a Hayes modem answered AT at boot (a modem line)
+TTY_ON = $02A7
+GUARD  = 70             ; jiffies of silence around +++ (more than 1 s)
 
 .macro setr0 lbl
         lda #<lbl
@@ -128,21 +172,19 @@ start:
         lda #$01
         jsr put1
         jmp @key
-@tr:    cmp #K_RET          ; RETURN -> CR
+; the key bindings (the table at the top): RETURN and the cursor keys are
+; translated, codes $80 and up dropped, everything else sent as it is
+@tr:    cmp #K_RET          ; RETURN (LF on the console) -> CR
         bne @n1
         lda #$0d
         bne @snd
-@n1:    cmp #K_DEL          ; DEL -> $7f
-        bne @n2
-        lda #$7f
-        bne @snd
-@n2:    ldx #3              ; cursor codes -> ESC [ A-D
+@n1:    ldx #3              ; cursor codes -> ESC [ A-D
 @c:     cmp ktab,x
         beq @esc
         dex
         bpl @c
         cmp #$80            ; F-keys and the like: dropped
-        bcc @snd
+        bcc @snd            ; DEL (K_DEL) goes out here as $08 BS
         jmp @key
 @snd:   jsr put1
         jmp @key
@@ -156,7 +198,10 @@ start:
         jsr putn
         jmp @key
 
-@quit:  lda cpid            ; screenw ends, and the line is cooked again
+@quit:  bit TTY_ON          ; a modem line: hang up first (bit 6 -> V)
+        bvc @stop
+        jsr hangup
+@stop:  lda cpid            ; screenw ends, and the line is cooked again
         ldx #SIGTERM
         jsr SYS_KILL
         lda cpid
@@ -182,6 +227,31 @@ putn:   stx r1
         lda fd
         jmp SYS_WRITE
 
+; putp: X bytes at A/Y -> the device
+putp:   sta r0
+        sty r0+1
+        stx r1
+        lda #0
+        sta r1+1
+        lda fd
+        jmp SYS_WRITE
+
+; hangup: +++ between two guard times, then ATH CR; then a moment more,
+; so the modem's OK (or NO CARRIER) is on the screen before screen clears it
+hangup: jsr guard
+        lda #<s_esc
+        ldy #>s_esc
+        ldx #3
+        jsr putp
+        jsr guard
+        lda #<s_ath
+        ldy #>s_ath
+        ldx #4
+        jsr putp
+guard:  lda #GUARD
+        ldx #0
+        jmp SYS_SLEEP
+
 ; fail: the message at A/X on stderr, exit code 1
 fail:   jsr eprint
         lda #1
@@ -201,6 +271,8 @@ s_welcome: .byte "Welcome to screen.", 10, "Connecting to ", 0
 s_keys:   .byte "...", 10
           .byte "Ctrl-A k: quit | Ctrl-A a: Ctrl-A", 10, 10, 0
 s_bye:    .byte 12, "[screen is terminating]", 10, 0
+s_esc:    .byte "+++"
+s_ath:    .byte "ATH", 13
 s_usage:  .byte "usage: screen /dev/ttyS0", 10, 0
 s_notty:  .byte "screen: needs the console", 10, 0
 

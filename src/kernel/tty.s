@@ -53,7 +53,8 @@ TXNEED    = 8           ; room one translated byte may need (ESC [ 2 5 ; 4 0 H)
 ; ---------------------------------------------------------------------
 ; LOWDATA ($02A7-$02FF): variables (copied at boot: all start at 0)
 .segment "LOWDATA"
-tty_on:   .byte 0       ; bit 7: a card was found at boot, bit 6: a modem answered AT
+tty_on:   .byte 0       ; bit 7: a card was found at boot, bit 6: a modem answered AT,
+                        ; bit 5: an ANSI terminal answered ESC [ 5 n
 tty_st:   .byte 0       ; ACIA status, as the NMI hook read it
 hold_cnt: .byte 0       ; jiffies left of a disk hold (0 = none)
 fg_tty:   .byte 0       ; the terminal sigint_fg / sigtstp_fg act on
@@ -348,7 +349,7 @@ tty_init:
         bne @no             ; plain RAM (or nothing) would still read $02
         lda #CTL_SPEED
         sta ACIA_CTL
-        jsr modem_probe     ; A = $80, or $c0 when a modem answered
+        jsr modem_probe     ; A = $80, $a0 ANSI terminal, $c0 modem
         sta mp_b
         php
         sei
@@ -368,51 +369,121 @@ tty_init:
         lda #CMD_IDLE
         sta ACIA_CMD
         lda mp_b
-        sta tty_on          ; bit 7 card, bit 6 modem (no login on a modem line)
+        sta tty_on          ; bit 7 card, 6 modem (no login there), 5 ANSI terminal
 @no:    rts
 
-; modem_probe: send "AT\r" and look for "OK" (a Hayes modem, tcpser). Polled,
-; with the chip's interrupts off and the NMI hooks still inert (tty_on is
-; not set yet). DTR is raised for the receiver; a modem answers commands
-; without it, but the 6551 does not receive with DTR off.
-; Out: A = $c0 modem, $80 plain card. About 0.4 s when nothing answers.
+; modem_probe: what is at the far end of the line? Polled, with the chip's
+; interrupts off and the NMI hooks still inert (tty_on is not set yet).
+; DTR is raised: VICE connects its TCP line then, and the 6551 does not
+; receive with DTR off.
+;  1. DSR, up to ~50 ms: off = nothing there (VICE with no listener on its
+;     TCP port, a cable with nothing at the far end): send nothing.
+;  2. ESC [ 5 n (ANSI device status), ~0.4 s for ESC [ 0 n: a VT100/ANSI
+;     terminal (xterm, Windows Terminal, PuTTY behind socat). AT is then
+;     not sent, so it never shows on the terminal's screen.
+;  3. CR A T CR, ~0.4 s for OK: a Hayes modem (tcpser, a WiFi modem). The
+;     first CR ends the line the modem got from step 2.
+; Every wait is bounded, also when the chip never takes a byte (TDRE stays
+; clear) or bytes keep coming.
+; Out: A = $80 plain card, $a0 ANSI terminal, $c0 modem.
 modem_probe:
         lda #$0b            ; DTR on, receive IRQ off
         sta ACIA_CMD
-        lda ACIA_DATA       ; drop a stale byte
-        ldx #2
-@tx:    lda ACIA_ST
-        and #$10            ; TDRE
-        beq @tx
-        lda at_cr,x
-        sta ACIA_DATA
-        dex
-        bpl @tx
+        lda #16             ; 16 * 256 polls (~50 ms) for DSR
+        sta mp_b
         ldy #0
-        ldx #$80            ; 128 * 256 polls
+@dsr:   lda ACIA_ST
+        and #$40            ; DSR: 0 = the far end is there
+        beq @line
+        dey
+        bne @dsr
+        dec mp_b
+        bne @dsr
+        beq @plain          ; nobody on the line
+@line:  lda ACIA_DATA       ; drop a stale byte
+        ldx #q_dsr - mp_str
+        jsr mp_send
+        bcs @plain
+        lda #$30            ; '0' then 'n' (ASCII)
+        ldy #$6e
+        jsr mp_wait
+        bcs @at
+        lda #$a0            ; an ANSI terminal answered
+        rts
+@at:    ldx #q_at - mp_str
+        jsr mp_send
+        bcs @plain
+        lda #$4f            ; 'O' then 'K'
+        ldy #$4b
+        jsr mp_wait
+        bcs @plain
+        lda #$c0            ; a modem answered
+        rts
+@plain: lda #$80
+        rts
+
+; mp_send: send the zero-terminated string at mp_str+X, giving each byte
+; ~50 ms to go out. C set when the chip never took one.
+mp_send:
+        lda #16
+        sta mp_c
+        ldy #0
+@tw:    lda ACIA_ST
+        and #$10            ; TDRE
+        bne @put
+        dey
+        bne @tw
+        dec mp_c
+        bne @tw
+        sec
+        rts
+@put:   lda mp_str,x
+        beq @done
+        sta ACIA_DATA
+        inx
+        bne mp_send
+@done:  clc
+        rts
+
+; mp_wait: poll ~0.4 s (128 * 256 polls, counted whether or not a byte came)
+; for byte A followed by byte Y. C clear when they came.
+mp_wait:
+        sta mp_1
+        sty mp_2
+        lda #0
+        sta mp_b            ; no previous byte yet
+        tay
+        ldx #$80
 @w:     lda ACIA_ST
         and #$08            ; RDRF
-        bne @got
+        beq @t
+        lda ACIA_DATA
+        cmp mp_2
+        bne @nk
+        lda mp_b
+        cmp mp_1
+        beq @yes
+        lda mp_2
+@nk:    sta mp_b
 @t:     dey
         bne @w
         dex
         bne @w
-        lda #$80
+        sec
         rts
-@got:   lda ACIA_DATA
-        cmp #'K'
-        bne @nk
-        lda mp_b
-        cmp #'O'
-        bne @nk
-        lda #$c0
+@yes:   clc
         rts
-@nk:    sta mp_b
-        bne @w              ; (Z is still clear from the compares above)
 
-; AT\r, last byte first. mp_b is the previous byte read (RAM in INIT).
-at_cr:  .byte 13, 'T', 'A'
+; the probes, as ASCII bytes (no PETSCII translation)
+mp_str:
+q_dsr:  .byte $1b, $5b, $35, $6e, 0         ; ESC [ 5 n
+q_at:   .byte 13, $41, $54, 13, 0           ; CR A T CR
+; scratch (RAM in INIT): mp_b the previous byte read (tty_init keeps the
+; result there), mp_c a counter, mp_1/mp_2 the pair looked for
 mp_b:   .byte 0
+mp_c:   .byte 0
+mp_1:   .byte 0
+mp_2:   .byte 0
 
 ; ---------------------------------------------------------------------
 ; under the KERNAL ROM
@@ -578,7 +649,8 @@ hangup: ldx #MAXPROC-1
 
 ; tty_mode: Y = 0 cooked, 1 raw, 2 binary (conmode with stdin on the serial
 ; line). Binary passes every byte both ways as it is (CTRL-C too, no LF
-; to CR LF) and a read returns all that is waiting: for a terminal program
+; to CR LF) and a read returns all that is waiting: for a terminal program.
+; In binary mode only the process that set it reads the line (tty_rd).
 tty_mode:
         sty t_raw
         ldx cur
@@ -634,7 +706,11 @@ tty_rd: lda t_raw
         beq @cooked
         cmp #2
         bcc @raw
-        ldy #0              ; binary: all that is waiting, up to r1 (255)
+        ldx cur             ; binary: the line is its owner's alone (screen's
+        lda p_pid,x         ; screenw). Any other reader, such as init's
+        cmp t_rawpid        ; login, waits as if nothing came, and gets the
+        bne @wait           ; line back cooked when the owner has gone
+        ldy #0              ; all that is waiting, up to r1 (255)
 @bl:    lda r1+1
         bne @bg
         cpy r1
