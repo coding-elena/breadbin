@@ -3,7 +3,8 @@
 ;   screen /dev/ttyS0      connect the console to the device in argv[1];
 ;                          any further arguments are ignored
 ;
-; Keys: CTRL-A k quits, CTRL-A a sends a CTRL-A.
+; Keys: CTRL-A k quits, CTRL-A h hangs up the modem (and stays connected),
+; CTRL-A CTRL-A sends a CTRL-A.
 ;
 ; Keys: C64 -> ANSI. The console in raw mode gives Breadbin's own key
 ; codes (include/breadbin.inc), already ASCII, not PETSCII. Several of
@@ -26,7 +27,8 @@
 ;                    (= CTRL-P, CTRL-N, CTRL-F, CTRL-B: those four can't
 ;                    be sent as themselves)
 ;   CLR/HOME         K_HOME  $01     the CTRL-A prefix (= CTRL-A). HOME has
-;                    (= CTRL-A)      no ANSI key here; CTRL-A a sends $01
+;                    (= CTRL-A)      no ANSI key here; CTRL-A CTRL-A sends
+;                                    $01
 ;   SHIFT CLR        K_CLR   $0c     $0c, as sent (= CTRL-L, form feed)
 ;   CTRL-I           K_TAB   $09     $09 TAB, as sent
 ;   other CTRL keys  $01-$1a         as sent (CTRL-J is RETURN's code: CR)
@@ -52,13 +54,16 @@
 ; which is on the serial terminal: it notices that screen has gone at the
 ; next byte that arrives, and ends then. Use CTRL-A k.
 ;
-; Leaving (CTRL-A k) on a modem line hangs the call up first, while
-; screenw still draws the modem's answers: the Hayes escape, GUARD jiffies
-; of silence, +++, GUARD jiffies of silence (the guard time: S12 = 50,
-; 1 s, on tcpser and most modems), then ATH CR. Without a call the modem is
-; in command mode already: it ignores the +++ and answers ATH with OK. DTR
-; is not dropped for it: VICE's TCP line (without IP232) doesn't pass DTR
-; on, and many modems ignore DTR anyway (AT&D0).
+; Hanging up (CTRL-A h, and CTRL-A k before it leaves) on a modem line
+; hangs the call up while screenw still draws the modem's answers: the
+; Hayes escape, GUARD jiffies of silence, +++, GUARD jiffies of silence
+; (the guard time: S12 = 50, 1 s, on tcpser and most modems), then ATH CR.
+; Without a call the modem is in command mode already: it ignores the +++
+; and answers ATH with OK. DTR is not dropped for it: VICE's TCP line
+; (without IP232) doesn't pass DTR on, and many modems ignore DTR anyway
+; (AT&D0). While it waits, screen reads no keys: what is typed meanwhile
+; stays in the console buffer and is sent afterwards. CTRL-A h on a line
+; that is not a modem line does nothing.
 ;
 ; Note: init's login on /dev/ttyS0 reads the same receive ring (not on a
 ; modem line: there init starts no login).
@@ -165,12 +170,18 @@ start:
         jmp @key
 @pfx:   ldx #0
         stx prefix
-        cmp #'k'
+        cmp #'k'            ; CTRL-A k: quit
         beq @quit
-        cmp #'a'            ; CTRL-A a: a CTRL-A to the line
+        cmp #'h'            ; CTRL-A h: hang up, stay in screen
+        beq @hang
+        cmp #K_HOME         ; CTRL-A CTRL-A: a CTRL-A to the line
         bne @key
         lda #$01
         jsr put1
+        jmp @key
+@hang:  bit TTY_ON          ; a modem line only (bit 6 -> V): on any other
+        bvc @key            ; line there is nothing to hang up
+        jsr hangup          ; screenw keeps drawing the modem's answers
         jmp @key
 ; the key bindings (the table at the top): RETURN and the cursor keys are
 ; translated, codes $80 and up dropped, everything else sent as it is
@@ -237,7 +248,8 @@ putp:   sta r0
         jmp SYS_WRITE
 
 ; hangup: +++ between two guard times, then ATH CR; then a moment more,
-; so the modem's OK (or NO CARRIER) is on the screen before screen clears it
+; so the modem's OK (or NO CARRIER) is on the screen before screen clears
+; it (on quit) or the next key is read (CTRL-A h)
 hangup: jsr guard
         lda #<s_esc
         ldy #>s_esc
@@ -269,7 +281,7 @@ ktab:     .byte K_UP, K_DOWN, K_RIGHT, K_LEFT
 ltab:     .byte "ABCD"
 s_welcome: .byte "Welcome to screen.", 10, "Connecting to ", 0
 s_keys:   .byte "...", 10
-          .byte "Ctrl-A k: quit | Ctrl-A a: Ctrl-A", 10, 10, 0
+          .byte "Ctrl-A: k)quit h)hangup Ctrl-A)Ctrl-A", 10, 10, 0
 s_bye:    .byte 12, "[screen is terminating]", 10, 0
 s_esc:    .byte "+++"
 s_ath:    .byte "ATH", 13
